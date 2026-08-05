@@ -22,19 +22,17 @@ async function render() {
   );
 }
 
-test("server-renders the Maple tracker shell", async () => {
+test("server-renders the authenticated Maple entry shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<title>Maple Component Tracker<\/title>/i);
-  assert.match(html, /<h1>Component tracker<\/h1>/);
+  assert.match(html, /<h1>Connecting to Maple<\/h1>/);
+  assert.match(html, /Checking your AP account/);
+  assert.match(html, /AP News design system/);
   assert.doesNotMatch(html, /Grooming workspace|Component priorities/);
-  assert.match(html, /Set the system scope/);
-  assert.match(html, /Refine by platform/);
-  assert.match(html, /Import Figma JSON/);
-  assert.match(html, /Add component/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 

@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { User } from "firebase/auth";
+import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import { collection, doc, onSnapshot, setDoc, writeBatch } from "firebase/firestore";
 import {
   initialComponents,
   type AdoptionStatus,
@@ -12,6 +15,7 @@ import {
   type SupportStatus,
 } from "./component-data";
 import { mergeImportedComponents, parseFigmaComponentExport } from "./figma-import";
+import { allowedEmailDomain, firebaseConfigured, getFirebaseServices } from "./firebase";
 
 const componentTypes: Array<ComponentType | "All types"> = [
   "All types", "Base", "Slot", "Module", "Page structure",
@@ -68,8 +72,11 @@ function jiraLinks(value: ComponentRecord["links"]["jira"] | string): string[] {
 }
 
 export default function Home() {
-  const [components, setComponents] = useState<ComponentRecord[]>(initialComponents);
-  const [hydrated, setHydrated] = useState(false);
+  const [components, setComponents] = useState<ComponentRecord[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
+  const [isEditor, setIsEditor] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<(typeof componentTypes)[number]>("All types");
   const [designFilter, setDesignFilter] = useState<(typeof designStatuses)[number]>("All design statuses");
@@ -83,17 +90,45 @@ export default function Home() {
   const importInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("maple-components-v3");
-    if (stored) {
-      try { setComponents(JSON.parse(stored)); }
-      catch { window.localStorage.removeItem("maple-components-v3"); }
+    if (!firebaseConfigured) {
+      setAuthReady(true);
+      return;
     }
-    setHydrated(true);
+    const { auth } = getFirebaseServices();
+    return onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+      setAuthReady(true);
+    });
   }, []);
 
   useEffect(() => {
-    if (hydrated) window.localStorage.setItem("maple-components-v3", JSON.stringify(components));
-  }, [components, hydrated]);
+    setComponents([]);
+    setIsEditor(false);
+    setDataReady(!user);
+    if (!user) return;
+
+    const emailDomain = user.email?.split("@").at(-1)?.toLowerCase();
+    if (emailDomain !== allowedEmailDomain.toLowerCase()) {
+      setImportNotice({ tone: "error", message: `Use an @${allowedEmailDomain} account to access the component tracker.` });
+      void signOut(getFirebaseServices().auth);
+      return;
+    }
+
+    const { db } = getFirebaseServices();
+    const stopEditor = onSnapshot(doc(db, "editors", user.uid),
+      (snapshot) => setIsEditor(snapshot.exists()),
+      () => setIsEditor(false),
+    );
+    const stopComponents = onSnapshot(collection(db, "components"), (snapshot) => {
+      const records = snapshot.docs.map((item) => item.data() as ComponentRecord);
+      setComponents(records.sort((a, b) => a.name.localeCompare(b.name)));
+      setDataReady(true);
+    }, (error) => {
+      setDataReady(true);
+      setImportNotice({ tone: "error", message: error.code === "permission-denied" ? "Your account does not currently have access to the component inventory." : "The component inventory could not be loaded." });
+    });
+    return () => { stopEditor(); stopComponents(); };
+  }, [user]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -143,31 +178,75 @@ export default function Home() {
     setDetailTrail((current) => reset ? [id] : [...current.filter((item) => item !== id), id]);
   }
 
-  function saveComponent(event: React.FormEvent<HTMLFormElement>) {
+  async function saveComponent(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editing?.name.trim()) return;
+    if (!isEditor) {
+      setImportNotice({ tone: "error", message: "Only approved editors can change component records." });
+      return;
+    }
     const updated = { ...editing, name: editing.name.trim(), updated: "Today" };
-    setComponents((current) => current.some((component) => component.id === updated.id)
-      ? current.map((component) => component.id === updated.id ? updated : component)
-      : [updated, ...current]);
-    setEditing(null);
+    try {
+      await setDoc(doc(getFirebaseServices().db, "components", updated.id), updated);
+      setEditing(null);
+    } catch {
+      setImportNotice({ tone: "error", message: "The component could not be saved. Check your editor access and try again." });
+    }
   }
 
   async function importFigmaJson(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    if (!isEditor) {
+      setImportNotice({ tone: "error", message: "Only approved editors can import component records." });
+      return;
+    }
 
     try {
       const imported = parseFigmaComponentExport(JSON.parse(await file.text()));
       const result = mergeImportedComponents(components, imported);
-      setComponents(result.components);
+      const batch = writeBatch(getFirebaseServices().db);
+      for (const component of result.components) batch.set(doc(getFirebaseServices().db, "components", component.id), component);
+      await batch.commit();
       setImportNotice({
         tone: "success",
         message: `${file.name}: ${result.added} component${result.added === 1 ? "" : "s"} added and ${result.updated} updated. Existing workflow statuses and manually entered resource links were preserved.`,
       });
     } catch (error) {
       setImportNotice({ tone: "error", message: error instanceof Error ? error.message : "This JSON file could not be imported." });
+    }
+  }
+
+  async function publishStarterInventory() {
+    if (!isEditor) return;
+    let seed = initialComponents;
+    const localCopy = window.localStorage.getItem("maple-components-v3");
+    if (localCopy) {
+      try {
+        const parsed = JSON.parse(localCopy);
+        if (Array.isArray(parsed) && parsed.length) seed = parsed;
+      } catch { /* Use the bundled inventory. */ }
+    }
+
+    try {
+      const { db } = getFirebaseServices();
+      const batch = writeBatch(db);
+      for (const component of seed) batch.set(doc(db, "components", component.id), component);
+      await batch.commit();
+      setImportNotice({ tone: "success", message: `${seed.length} component records were published to the shared inventory.` });
+    } catch {
+      setImportNotice({ tone: "error", message: "The starter inventory could not be published. Check your editor access and try again." });
+    }
+  }
+
+  async function signIn() {
+    setImportNotice(null);
+    try {
+      const { auth, provider } = getFirebaseServices();
+      await signInWithPopup(auth, provider);
+    } catch {
+      setImportNotice({ tone: "error", message: "Google sign-in was not completed." });
     }
   }
 
@@ -179,6 +258,11 @@ export default function Home() {
     setPlatformFilters({ web: "All statuses", ios: "All statuses", android: "All statuses" });
   }
 
+  if (!authReady) return <AccessScreen title="Connecting to Maple" message="Checking your AP account…" />;
+  if (!firebaseConfigured) return <AccessScreen title="Firebase setup required" message="Add the Firebase web configuration to this environment before opening the tracker." />;
+  if (!user) return <AccessScreen title="Component tracker" message={importNotice?.message ?? `Sign in with your @${allowedEmailDomain} Google account to review the Maple inventory.`} actionLabel="Sign in with Google" onAction={signIn} error={importNotice?.tone === "error"} />;
+  if (!dataReady) return <AccessScreen title="Loading the inventory" message="Connecting to the shared component data…" />;
+
   return (
     <main>
       <header className="app-header">
@@ -188,10 +272,9 @@ export default function Home() {
           <span className="brand-product">AP News design system</span>
         </a>
         <div className="header-actions">
-          <span className="prototype-state"><i /> Firebase-ready prototype</span>
-          <input ref={importInput} className="sr-only" type="file" accept="application/json,.json" onChange={importFigmaJson} />
-          <button className="button secondary import-button" onClick={() => importInput.current?.click()}><span className="import-wide">Import Figma JSON</span><span className="import-short">Import JSON</span></button>
-          <button className="button primary" onClick={() => setEditing(emptyComponent())}>＋ Add component</button>
+          <span className="prototype-state"><i /> Live · {isEditor ? "Editor" : "Viewer"}</span>
+          {isEditor && <><input ref={importInput} className="sr-only" type="file" accept="application/json,.json" onChange={importFigmaJson} /><button className="button secondary import-button" onClick={() => importInput.current?.click()}><span className="import-wide">Import Figma JSON</span><span className="import-short">Import JSON</span></button><button className="button primary" onClick={() => setEditing(emptyComponent())}>＋ Add component</button></>}
+          <button className="account-button" onClick={() => void signOut(getFirebaseServices().auth)} title={user.email ?? "Signed in"}>{user.email?.split("@")[0]} <span>Sign out</span></button>
         </div>
       </header>
 
@@ -270,7 +353,9 @@ export default function Home() {
                 ))}
               </tbody>
             </table>
-            {!filtered.length && <div className="empty"><strong>No matching components</strong><span>Try removing a platform refinement or broadening the system scope.</span><button onClick={clearAllFilters}>Clear filters</button></div>}
+            {!filtered.length && (components.length === 0
+              ? <div className="empty"><strong>The shared inventory is empty</strong><span>{isEditor ? "Publish the prototype’s current records to initialize Firestore." : "An editor needs to publish the initial component inventory."}</span>{isEditor && <button onClick={publishStarterInventory}>Publish starter inventory</button>}</div>
+              : <div className="empty"><strong>No matching components</strong><span>Try removing a platform refinement or broadening the system scope.</span><button onClick={clearAllFilters}>Clear filters</button></div>)}
           </div>
         </section>
       </div>
@@ -285,12 +370,31 @@ export default function Home() {
           onClose={() => setDetailTrail([])}
           onSelect={openDetails}
           onEdit={() => setEditing({ ...selectedComponent })}
+          canEdit={isEditor}
         />
       )}
 
       {editing && <Editor component={editing} onChange={setEditing} onCancel={() => setEditing(null)} onSave={saveComponent} />}
     </main>
   );
+}
+
+function AccessScreen({ title, message, actionLabel, onAction, error = false }: {
+  title: string;
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  error?: boolean;
+}) {
+  return <main className="access-shell">
+    <div className="access-brand"><span className="brand-mark">M</span><strong>Maple</strong><span>AP News design system</span></div>
+    <section className="access-card">
+      <span className="access-label">Component tracker</span>
+      <h1>{title}</h1>
+      <p className={error ? "access-error" : ""}>{message}</p>
+      {actionLabel && onAction && <button className="button primary" onClick={onAction}>{actionLabel}</button>}
+    </section>
+  </main>;
 }
 
 function Filter({ label, value, options, onChange, compact = false }: {
@@ -303,7 +407,7 @@ function Filter({ label, value, options, onChange, compact = false }: {
   return <label className={`filter ${compact ? "compact-filter" : ""}`}><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select></label>;
 }
 
-function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClose, onSelect, onEdit }: {
+function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClose, onSelect, onEdit, canEdit }: {
   component: ComponentRecord;
   components: ComponentRecord[];
   usedBy: ComponentRecord[];
@@ -312,6 +416,7 @@ function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClos
   onClose: () => void;
   onSelect: (id: string) => void;
   onEdit: () => void;
+  canEdit: boolean;
 }) {
   const componentMap = new Map(components.map((item) => [item.id, item]));
   return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}>
@@ -319,7 +424,7 @@ function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClos
       <div className="drawer-nav"><button onClick={onBack} disabled={!canGoBack} aria-label="Back">←</button><span>Component details</span><button onClick={onClose} aria-label="Close">×</button></div>
       <div className="drawer-header">
         <div><span className={`type-label type-${component.type.toLowerCase().replace(" ", "-")}`}>{typeLabel[component.type]}</span><h2 id="drawer-title">{component.name}</h2></div>
-        <button className="button secondary" onClick={onEdit}>Edit</button>
+        {canEdit && <button className="button secondary" onClick={onEdit}>Edit</button>}
       </div>
       <p className="drawer-description">{component.notes || "No notes added."}</p>
 

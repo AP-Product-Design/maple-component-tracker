@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isApUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@ap[.]org$');
+    }
+
+    function isEditor() {
+      return isApUser()
+        && exists(/databases/$(database)/documents/editors/$(request.auth.uid));
+    }
+
+    match /components/{componentId} {
+      allow read: if isApUser();
+      allow create, update, delete: if isEditor();
+    }
+
+    match /editors/{userId} {
+      allow read: if isApUser() && request.auth.uid == userId;
+      allow write: if false;
+    }
+  }
+}

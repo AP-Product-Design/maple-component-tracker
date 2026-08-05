@@ -20,22 +20,32 @@ Requires Node.js 22.13 or newer.
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
 ```
+
+Add the Firebase Web App configuration values to `.env.local` before starting
+the server. The local environment file is intentionally excluded from Git.
 
 Open [http://localhost:3000](http://localhost:3000).
 
 ## Updating data
 
-Use **Add component** or **Edit record** in the dashboard. Changes are saved to
-the current browser automatically.
+The dashboard uses Firebase Authentication and Cloud Firestore. Verified
+`@ap.org` accounts can view the inventory. Users with a matching document at
+`editors/{firebase-auth-uid}` can add, edit, and import component records.
 
-Use **Export JSON** to download the current inventory and **Import JSON** to
-load a shared copy. This makes it easy to keep the site static while the team
-is establishing its workflow. The export can be committed to the repo or used
-as the seed for a future API or CMS.
+Use **Add component** for manual records or **Import Figma JSON** to merge a
+Figma component export. Firestore listeners update every open dashboard when a
+record changes.
 
-Starter data lives in `app/page.tsx` in `initialComponents`.
+On a new database, an approved editor can use **Publish starter inventory** to
+seed Firestore from the browser's previous local copy or the bundled inventory.
+Starter data lives in `app/component-data.ts`.
+
+Firestore rules live in `firestore.rules`. Deploy them before connecting the
+production dashboard. Editor documents must be created by an administrator in
+the Firebase console because client writes to `editors` are denied.
 
 ## Production check
 
