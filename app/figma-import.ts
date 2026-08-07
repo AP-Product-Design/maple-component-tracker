@@ -134,6 +134,8 @@ function makeRecord({ name, type, variants, page, nodeId, notes, composition, fi
     status: "In design",
     support: "Planned",
     adoption: { ...defaultAdoption } as Record<Platform, ComponentRecord["adoption"][Platform]>,
+    currentVersion: "1.0",
+    releaseHistory: [],
     composedOf: (composition ?? []).map((item) => item.name),
     composition: composition ?? [],
     links: { figma: figmaLink(fileKey, nodeId) },

@@ -49,6 +49,8 @@ test("imports top-level and nested Figma components while ignoring building bloc
 
   const module = records.find((record) => record.type === "Module");
   assert.equal(module.composition[0].componentId, "figma-slot-story-card");
+  assert.equal(module.currentVersion, "1.0");
+  assert.deepEqual(module.releaseHistory, []);
   assert.match(module.links.figma, /figma-file-key.*node-id=1-1/);
 });
 
@@ -58,6 +60,8 @@ test("repeat imports preserve manually managed workflow fields", () => {
     ...imported.find((record) => record.type === "Module"),
     status: "Ready",
     support: "Full",
+    currentVersion: "2.0",
+    releaseHistory: ["1.1", "1.0"],
     links: { jira: ["https://jira.example/MAPLE-1"] },
     notes: "Editor-authored note",
   };
@@ -67,6 +71,8 @@ test("repeat imports preserve manually managed workflow fields", () => {
   assert.equal(result.updated, 1);
   assert.equal(result.components[0].status, "Ready");
   assert.equal(result.components[0].support, "Full");
+  assert.equal(result.components[0].currentVersion, "2.0");
+  assert.deepEqual(result.components[0].releaseHistory, ["1.1", "1.0"]);
   assert.deepEqual(result.components[0].links.jira, ["https://jira.example/MAPLE-1"]);
   assert.equal(result.components[0].notes, "Editor-authored note");
   assert.match(result.components[0].links.figma, /figma-file-key/);
