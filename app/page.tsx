@@ -354,6 +354,34 @@ export default function Home() {
     }
   }
 
+  async function deleteComponent(component: ComponentRecord): Promise<boolean> {
+    if (!isEditor || !components.some((item) => item.id === component.id)) return false;
+    try {
+      const { db } = getFirebaseServices();
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "components", component.id));
+      for (const parent of components) {
+        if (parent.id === component.id || !walkIds(parent.composition).includes(component.id)) continue;
+        const composition = removeRelationship(parent.composition, component.id);
+        batch.set(doc(db, "components", parent.id), {
+          ...parent,
+          composition,
+          composedOf: composition.map((node) => node.name),
+          relationshipsModified: true,
+          updated: "Today",
+        });
+      }
+      await batch.commit();
+      setEditing(null);
+      setDetailTrail([]);
+      setImportNotice({ tone: "success", message: `${component.name} was deleted from the shared component inventory.` });
+      return true;
+    } catch {
+      setImportNotice({ tone: "error", message: `${component.name} could not be deleted. Check your editor access and try again.` });
+      return false;
+    }
+  }
+
   async function importFigmaJson(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -567,7 +595,7 @@ export default function Home() {
         />
       )}
 
-      {editing && <Editor component={editing} components={components} onChange={setEditing} onCancel={() => setEditing(null)} onSave={saveComponent} />}
+      {editing && <Editor component={editing} components={components} onChange={setEditing} onCancel={() => setEditing(null)} onSave={saveComponent} onDelete={deleteComponent} canDelete={components.some((component) => component.id === editing.id)} />}
       {pendingImport && <ImportReview pending={pendingImport} onChange={setPendingImport} onCancel={() => setPendingImport(null)} onConfirm={() => void confirmFigmaImport()} />}
     </main>
   );
@@ -718,16 +746,25 @@ function Dependency({ node, componentMap, onSelect, depth }: {
   </div>;
 }
 
-function Editor({ component, components, onChange, onCancel, onSave }: {
+function Editor({ component, components, onChange, onCancel, onSave, onDelete, canDelete }: {
   component: ComponentRecord;
   components: ComponentRecord[];
   onChange: (component: ComponentRecord) => void;
   onCancel: () => void;
   onSave: (event: React.FormEvent<HTMLFormElement>, composedIds: string[], usedInIds: string[]) => void;
+  onDelete: (component: ComponentRecord) => Promise<boolean>;
+  canDelete: boolean;
 }) {
   const candidates = components.filter((candidate) => candidate.id !== component.id);
   const [composedIds, setComposedIds] = useState(() => (component.composition ?? []).map((node) => node.componentId).filter((id): id is string => Boolean(id)));
   const [usedInIds, setUsedInIds] = useState(() => components.filter((candidate) => walkIds(candidate.composition).includes(component.id)).map((candidate) => candidate.id));
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  async function confirmDelete() {
+    setDeleting(true);
+    const deleted = await onDelete(component);
+    if (!deleted) setDeleting(false);
+  }
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
     <section className="editor" role="dialog" aria-modal="true" aria-labelledby="editor-title" onMouseDown={(event) => event.stopPropagation()}>
       <div className="editor-header"><div><span>Component record</span><h2 id="editor-title">{component.name ? `Edit ${component.name}` : "Add component"}</h2></div><button onClick={onCancel} aria-label="Close">×</button></div>
@@ -751,7 +788,7 @@ function Editor({ component, components, onChange, onCancel, onSave }: {
           <label className="wide">Prototype URL<input type="url" value={component.links.prototype ?? ""} onChange={(event) => onChange({ ...component, links: { ...component.links, prototype: event.target.value } })} placeholder="https://..." /></label>
           <label className="wide">Jira URLs <small>One link per line</small><textarea rows={3} value={jiraLinks(component.links.jira as ComponentRecord["links"]["jira"] | string).join("\n")} onChange={(event) => onChange({ ...component, links: { ...component.links, jira: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean) } })} placeholder={"https://jira.../MAPLE-123\nhttps://jira.../MAPLE-456"} /></label>
         </div>
-        <div className="editor-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button type="submit" className="button primary">Save changes</button></div>
+        {confirmingDelete ? <div className="delete-confirmation" role="alert"><div><strong>Delete {component.name}?</strong><p>This removes the component from the shared inventory and clears its references from other components. This action cannot be undone.</p></div><div><button type="button" className="button secondary" onClick={() => setConfirmingDelete(false)} disabled={deleting}>Keep component</button><button type="button" className="button danger-solid" onClick={() => void confirmDelete()} disabled={deleting}>{deleting ? "Deleting…" : "Delete component"}</button></div></div> : <div className="editor-actions">{canDelete && <button type="button" className="button danger delete-trigger" onClick={() => setConfirmingDelete(true)}>Delete component</button>}<button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button type="submit" className="button primary">Save changes</button></div>}
       </form>
     </section>
   </div>;

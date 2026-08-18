@@ -39,6 +39,9 @@ button, select { cursor: pointer; }
 .button { min-height: 38px; padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; background: transparent; color: var(--ink); font-size: 12px; font-weight: 800; text-decoration: none; }
 .button.primary { color: white; background: var(--ink); }
 .button.secondary { background: var(--surface); border-color: var(--line-dark); }
+.button.danger { color: var(--red); border-color: var(--red); background: var(--surface); }
+.button.danger-solid { color: white; background: var(--red); }
+.button:disabled { cursor: default; opacity: .55; }
 .import-short { display: none; }
 .account-button { max-width: 150px; padding: 5px 0; overflow: hidden; border: 0; background: transparent; color: var(--muted); font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .account-button span { display: block; margin-top: 2px; color: var(--ink); font-size: 9px; font-weight: 800; }
@@ -213,6 +216,11 @@ td:first-child { padding-left: 18px; }
 .relationship-options small { margin: 2px 0 0; color: var(--muted); font-size: 9px; font-weight: 400; }
 .relationship-options p { margin: 0; padding: 16px 10px; color: var(--muted); font-size: 11px; }
 .editor-actions { margin-top: 20px; display: flex; justify-content: flex-end; gap: 9px; }
+.delete-trigger { margin-right: auto; }
+.delete-confirmation { margin-top: 20px; padding: 16px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid var(--red); background: var(--red-bg); }
+.delete-confirmation strong { color: var(--red); font-size: 13px; }
+.delete-confirmation p { max-width: 440px; margin: 5px 0 0; color: var(--ink); font-size: 11px; line-height: 1.45; }
+.delete-confirmation > div:last-child { flex: 0 0 auto; display: flex; gap: 8px; }
 .import-review { width: min(560px, 100%); background: var(--canvas); box-shadow: 0 24px 80px rgba(0,0,0,.22); }
 .import-review-body { padding: 22px 24px 4px; }
 .import-review-body > p { margin: 0 0 16px; color: var(--ink); font-size: 13px; line-height: 1.45; }
@@ -235,7 +243,7 @@ td:first-child { padding-left: 18px; }
   .summary { grid-template-columns: 1fr 1fr; }.summary article { min-height: 96px; padding: 16px; }.type-guide summary > span:first-child { align-items: start; flex-direction: column; gap: 3px; }.type-guide summary small { display: none; }.type-guide-grid { grid-template-columns: 1fr; }.type-guide-grid article { min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); }.type-guide-grid article:nth-last-child(2) { border-bottom: 1px solid var(--line); }.table-heading > span { display: none; }
   .table-controls { align-items: stretch; flex-direction: column; }.table-search { width: 100%; }.mobile-filter-panel { display: block; border: 1px solid var(--line); }.mobile-filter-panel summary { min-height: 40px; padding: 0 11px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; color: var(--ink); font-size: 12px; font-weight: 700; }.mobile-filter-panel summary::-webkit-details-marker { display: none; }.mobile-filter-panel summary::after { content: "+"; font-size: 16px; }.mobile-filter-panel[open] summary::after { content: "−"; }.mobile-filter-grid { padding: 12px; display: grid; gap: 12px; border-top: 1px solid var(--line); }.active-filter-row { align-items: start; flex-direction: column; }.active-filter-row button { align-self: flex-end; }
   .drawer-header, .drawer-description, .detail-section { margin-left: 18px; margin-right: 18px; }.drawer-header { padding-left: 0; padding-right: 0; }.drawer-header h2 { font-size: 32px; }
-  .modal-backdrop { padding: 0; align-items: end; }.editor { max-height: 92vh; }.form-grid { grid-template-columns: 1fr; }.form-grid label.wide, .relationship-picker { grid-column: auto; }.form-section-title { grid-column: auto; }
+  .modal-backdrop { padding: 0; align-items: end; }.editor { max-height: 92vh; }.form-grid { grid-template-columns: 1fr; }.form-grid label.wide, .relationship-picker { grid-column: auto; }.form-section-title { grid-column: auto; }.delete-confirmation { align-items: stretch; flex-direction: column; }.delete-confirmation > div:last-child { justify-content: flex-end; }
 }
 
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
