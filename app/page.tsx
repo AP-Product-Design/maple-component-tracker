@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { collection, doc, onSnapshot, setDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, onSnapshot, writeBatch } from "firebase/firestore";
 import {
   initialComponents,
   type AdoptionStatus,
@@ -14,7 +14,7 @@ import {
   type Platform,
   type SupportStatus,
 } from "./component-data";
-import { mergeImportedComponents, parseFigmaComponentExport } from "./figma-import";
+import { mergeImportedComponents, parseFigmaComponentExportText } from "./figma-import";
 import { allowedEmailDomain, firebaseConfigured, getFirebaseServices } from "./firebase";
 
 const componentTypes: Array<ComponentType | "All types"> = [
@@ -32,6 +32,7 @@ const adoptionStatuses: Array<AdoptionStatus | "All statuses"> = [
 const platformLabels: Record<Platform, string> = { web: "Web", ios: "iOS", android: "Android" };
 type ColumnFilterKey = "type" | "design" | "support" | Platform;
 type OpenColumnFilter = { key: ColumnFilterKey; top: number; left: number };
+type PendingImport = { fileName: string; components: ComponentRecord[]; preserveManualRelationships: boolean };
 
 const typeLabel: Record<ComponentType, string> = {
   Base: "Base", Slot: "Slot", Module: "Module", "Page structure": "Page structure",
@@ -89,6 +90,39 @@ function normalizeComponent(record: ComponentRecord): ComponentRecord {
   };
 }
 
+function relationshipNode(component: ComponentRecord): CompositionNode {
+  return { name: component.name, kind: component.type, componentId: component.id, figmaNodeId: component.source?.nodeId };
+}
+
+function reconcileDirectRelationships(nodes: CompositionNode[], selectedIds: string[], components: ComponentRecord[]): CompositionNode[] {
+  const selected = new Set(selectedIds);
+  const retained = nodes.filter((node) => !node.componentId || selected.has(node.componentId));
+  const retainedIds = new Set(retained.map((node) => node.componentId).filter(Boolean));
+  return [
+    ...retained,
+    ...components.filter((component) => selected.has(component.id) && !retainedIds.has(component.id)).map(relationshipNode),
+  ];
+}
+
+function removeRelationship(nodes: CompositionNode[] = [], componentId: string): CompositionNode[] {
+  return nodes.filter((node) => node.componentId !== componentId).map((node) => ({
+    ...node,
+    children: node.children ? removeRelationship(node.children, componentId) : undefined,
+  }));
+}
+
+function refreshRelationship(nodes: CompositionNode[] = [], component: ComponentRecord): CompositionNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    ...(node.componentId === component.id ? { name: component.name, kind: component.type } : {}),
+    children: node.children ? refreshRelationship(node.children, component) : undefined,
+  }));
+}
+
+function sameIds(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((id) => right.includes(id));
+}
+
 export default function Home() {
   const [components, setComponents] = useState<ComponentRecord[]>([]);
   const [user, setUser] = useState<User | null>(null);
@@ -106,6 +140,7 @@ export default function Home() {
   const [editing, setEditing] = useState<ComponentRecord | null>(null);
   const [openColumnFilter, setOpenColumnFilter] = useState<OpenColumnFilter | null>(null);
   const [importNotice, setImportNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -153,13 +188,14 @@ export default function Home() {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (openColumnFilter) setOpenColumnFilter(null);
+        else if (pendingImport) setPendingImport(null);
         else if (editing) setEditing(null);
         else setDetailTrail([]);
       }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [editing, openColumnFilter]);
+  }, [editing, openColumnFilter, pendingImport]);
 
   useEffect(() => {
     if (!openColumnFilter) return;
@@ -265,7 +301,7 @@ export default function Home() {
     });
   }
 
-  async function saveComponent(event: React.FormEvent<HTMLFormElement>) {
+  async function saveComponent(event: React.FormEvent<HTMLFormElement>, composedIds: string[], usedInIds: string[]) {
     event.preventDefault();
     if (!editing?.name.trim()) return;
     if (!isEditor) {
@@ -276,15 +312,42 @@ export default function Home() {
     const currentVersion = editing.currentVersion.trim();
     let releaseHistory = editing.releaseHistory ?? [];
     if (previous && previous.currentVersion !== currentVersion) releaseHistory = [previous.currentVersion, ...releaseHistory.filter((version) => version !== previous.currentVersion)];
+    const composition = reconcileDirectRelationships(editing.composition ?? [], composedIds, components);
+    const previousComposedIds = (previous?.composition ?? []).map((node) => node.componentId).filter((id): id is string => Boolean(id));
+    const relationshipsChanged = !sameIds(previousComposedIds, composedIds);
     const updated: ComponentRecord = {
       ...editing,
       name: editing.name.trim(),
       currentVersion,
       releaseHistory,
+      composedOf: composition.map((node) => node.name),
+      composition,
+      relationshipsModified: Boolean(editing.relationshipsModified || relationshipsChanged),
       updated: "Today",
     };
     try {
-      await setDoc(doc(getFirebaseServices().db, "components", updated.id), updated);
+      const { db } = getFirebaseServices();
+      const batch = writeBatch(db);
+      batch.set(doc(db, "components", updated.id), updated);
+      const desiredParents = new Set(usedInIds);
+      for (const parent of components) {
+        if (parent.id === updated.id) continue;
+        const currentlyUsed = walkIds(parent.composition).includes(updated.id);
+        const shouldBeUsed = desiredParents.has(parent.id);
+        let parentComposition = refreshRelationship(parent.composition ?? [], updated);
+        if (currentlyUsed && !shouldBeUsed) parentComposition = removeRelationship(parentComposition, updated.id);
+        if (!currentlyUsed && shouldBeUsed) parentComposition = [...parentComposition, relationshipNode(updated)];
+        if (currentlyUsed !== shouldBeUsed || JSON.stringify(parentComposition) !== JSON.stringify(parent.composition ?? [])) {
+          batch.set(doc(db, "components", parent.id), {
+            ...parent,
+            composition: parentComposition,
+            composedOf: parentComposition.map((node) => node.name),
+            relationshipsModified: Boolean(parent.relationshipsModified || currentlyUsed !== shouldBeUsed),
+            updated: "Today",
+          });
+        }
+      }
+      await batch.commit();
       setEditing(null);
     } catch {
       setImportNotice({ tone: "error", message: "The component could not be saved. Check your editor access and try again." });
@@ -301,17 +364,28 @@ export default function Home() {
     }
 
     try {
-      const imported = parseFigmaComponentExport(JSON.parse(await file.text()));
-      const result = mergeImportedComponents(components, imported);
-      const batch = writeBatch(getFirebaseServices().db);
-      for (const component of result.components) batch.set(doc(getFirebaseServices().db, "components", component.id), component);
+      const imported = parseFigmaComponentExportText(await file.text());
+      setPendingImport({ fileName: file.name, components: imported, preserveManualRelationships: true });
+    } catch (error) {
+      setImportNotice({ tone: "error", message: error instanceof Error ? error.message : "This JSON file could not be imported." });
+    }
+  }
+
+  async function confirmFigmaImport() {
+    if (!pendingImport) return;
+    try {
+      const result = mergeImportedComponents(components, pendingImport.components, { preserveManualRelationships: pendingImport.preserveManualRelationships });
+      const { db } = getFirebaseServices();
+      const batch = writeBatch(db);
+      for (const component of result.components) batch.set(doc(db, "components", component.id), component);
       await batch.commit();
       setImportNotice({
         tone: "success",
-        message: `${file.name}: ${result.added} component${result.added === 1 ? "" : "s"} added and ${result.updated} updated. Existing workflow statuses and manually entered resource links were preserved.`,
+        message: `${pendingImport.fileName}: ${result.added} component${result.added === 1 ? "" : "s"} added and ${result.updated} updated. Existing workflow statuses, resource links${pendingImport.preserveManualRelationships ? ", and manual relationship overrides" : ""} were preserved.`,
       });
-    } catch (error) {
-      setImportNotice({ tone: "error", message: error instanceof Error ? error.message : "This JSON file could not be imported." });
+      setPendingImport(null);
+    } catch {
+      setImportNotice({ tone: "error", message: "The Figma import could not be published. Check your editor access and try again." });
     }
   }
 
@@ -493,9 +567,30 @@ export default function Home() {
         />
       )}
 
-      {editing && <Editor component={editing} onChange={setEditing} onCancel={() => setEditing(null)} onSave={saveComponent} />}
+      {editing && <Editor component={editing} components={components} onChange={setEditing} onCancel={() => setEditing(null)} onSave={saveComponent} />}
+      {pendingImport && <ImportReview pending={pendingImport} onChange={setPendingImport} onCancel={() => setPendingImport(null)} onConfirm={() => void confirmFigmaImport()} />}
     </main>
   );
+}
+
+function ImportReview({ pending, onChange, onCancel, onConfirm }: {
+  pending: PendingImport;
+  onChange: (pending: PendingImport) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const counts = componentTypes.slice(1).map((type) => ({ type, count: pending.components.filter((component) => component.type === type).length })).filter((item) => item.count > 0);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+    <section className="import-review" role="dialog" aria-modal="true" aria-labelledby="import-review-title" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="editor-header"><div><span>Figma import</span><h2 id="import-review-title">Review import</h2></div><button onClick={onCancel} aria-label="Close">×</button></div>
+      <div className="import-review-body">
+        <p><strong>{pending.fileName}</strong> contains {pending.components.length} tracked components.</p>
+        <div className="import-counts">{counts.map(({ type, count }) => <span key={type}><strong>{count}</strong> {type}</span>)}</div>
+        <label className="preserve-option"><input type="checkbox" checked={pending.preserveManualRelationships} onChange={(event) => onChange({ ...pending, preserveManualRelationships: event.target.checked })} /><span><strong>Preserve manually edited relationships</strong><small>Components marked as manually changed keep their current “Composed of” and “Used in” relationships. Untouched components continue to refresh from Figma.</small></span></label>
+      </div>
+      <div className="editor-actions import-review-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button type="button" className="button primary" onClick={onConfirm}>Import components</button></div>
+    </section>
+  </div>;
 }
 
 function AccessScreen({ title, message, actionLabel, onAction, error = false }: {
@@ -623,16 +718,20 @@ function Dependency({ node, componentMap, onSelect, depth }: {
   </div>;
 }
 
-function Editor({ component, onChange, onCancel, onSave }: {
+function Editor({ component, components, onChange, onCancel, onSave }: {
   component: ComponentRecord;
+  components: ComponentRecord[];
   onChange: (component: ComponentRecord) => void;
   onCancel: () => void;
-  onSave: (event: React.FormEvent<HTMLFormElement>) => void;
+  onSave: (event: React.FormEvent<HTMLFormElement>, composedIds: string[], usedInIds: string[]) => void;
 }) {
+  const candidates = components.filter((candidate) => candidate.id !== component.id);
+  const [composedIds, setComposedIds] = useState(() => (component.composition ?? []).map((node) => node.componentId).filter((id): id is string => Boolean(id)));
+  const [usedInIds, setUsedInIds] = useState(() => components.filter((candidate) => walkIds(candidate.composition).includes(component.id)).map((candidate) => candidate.id));
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
     <section className="editor" role="dialog" aria-modal="true" aria-labelledby="editor-title" onMouseDown={(event) => event.stopPropagation()}>
       <div className="editor-header"><div><span>Component record</span><h2 id="editor-title">{component.name ? `Edit ${component.name}` : "Add component"}</h2></div><button onClick={onCancel} aria-label="Close">×</button></div>
-      <form onSubmit={onSave}>
+      <form onSubmit={(event) => onSave(event, composedIds, usedInIds)}>
         <div className="form-grid">
           <label className="wide">Name<input required autoFocus value={component.name} onChange={(event) => onChange({ ...component, name: event.target.value })} /></label>
           <label>Type<select value={component.type} onChange={(event) => onChange({ ...component, type: event.target.value as ComponentType })}>{componentTypes.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
@@ -643,6 +742,9 @@ function Editor({ component, onChange, onCancel, onSave }: {
           <h3 className="form-section-title">Platform rollout</h3>
           {(["web", "ios", "android"] as Platform[]).map((platform) => <label key={platform}>{platformLabels[platform]} status<select value={component.adoption[platform]} onChange={(event) => onChange({ ...component, adoption: { ...component.adoption, [platform]: event.target.value as AdoptionStatus } })}>{adoptionStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>)}
           <label className="wide">Variants <small>Comma separated</small><input value={component.variants.join(", ")} onChange={(event) => onChange({ ...component, variants: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
+          <h3 className="form-section-title">System relationships</h3>
+          <RelationshipPicker label="Composed of" help="Direct components used to build this component" candidates={candidates} selectedIds={composedIds} onChange={setComposedIds} />
+          <RelationshipPicker label="Used in" help="Components that directly or indirectly include this component" candidates={candidates} selectedIds={usedInIds} onChange={setUsedInIds} />
           <label className="wide">Notes<textarea rows={4} value={component.notes} onChange={(event) => onChange({ ...component, notes: event.target.value })} /></label>
           <label>Figma URL<input type="url" value={component.links.figma ?? ""} onChange={(event) => onChange({ ...component, links: { ...component.links, figma: event.target.value } })} placeholder="https://figma.com/..." /></label>
           <label>Zeroheight URL<input type="url" value={component.links.zeroheight ?? ""} onChange={(event) => onChange({ ...component, links: { ...component.links, zeroheight: event.target.value } })} placeholder="https://zeroheight.com/..." /></label>
@@ -653,4 +755,28 @@ function Editor({ component, onChange, onCancel, onSave }: {
       </form>
     </section>
   </div>;
+}
+
+function RelationshipPicker({ label, help, candidates, selectedIds, onChange }: {
+  label: string;
+  help: string;
+  candidates: ComponentRecord[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const selected = new Set(selectedIds);
+  const visible = candidates.filter((candidate) => !query.trim() || candidate.name.toLowerCase().includes(query.trim().toLowerCase()));
+  function toggle(id: string) {
+    onChange(selected.has(id) ? selectedIds.filter((selectedId) => selectedId !== id) : [...selectedIds, id]);
+  }
+  return <fieldset className="relationship-picker">
+    <legend>{label} <small>{help}</small></legend>
+    <div className="relationship-picker-summary"><span>{selectedIds.length} selected</span>{selectedIds.length > 0 && <button type="button" onClick={() => onChange([])}>Clear</button>}</div>
+    <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a component…" aria-label={`Search ${label.toLowerCase()} components`} />
+    <div className="relationship-options">
+      {visible.map((candidate) => <label key={candidate.id}><input type="checkbox" checked={selected.has(candidate.id)} onChange={() => toggle(candidate.id)} /><span><strong>{candidate.name}</strong><small>{typeLabel[candidate.type]}</small></span></label>)}
+      {!visible.length && <p>No matching components.</p>}
+    </div>
+  </fieldset>;
 }

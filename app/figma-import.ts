@@ -47,8 +47,8 @@ function classificationType(value: unknown): ComponentType | null {
 
 function isBuildingBlock(node: JsonObject): boolean {
   return text(node.classification).toLowerCase() === "building_block" ||
-    /^building blocks?\s*\//i.test(text(node.name)) ||
-    /^building blocks?/i.test(text(node.page));
+    /^\.?building blocks?\s*\//i.test(text(node.name)) ||
+    /^\.?building blocks?/i.test(text(node.page));
 }
 
 function componentId(type: ComponentType, name: string): string {
@@ -115,7 +115,8 @@ function dateLabel(value: string): string {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
 }
 
-function makeRecord({ name, type, variants, page, nodeId, notes, composition, fileKey, exportDate }: {
+function makeRecord({ id, name, type, variants, page, nodeId, notes, composition, fileKey, exportDate }: {
+  id?: string;
   name: string;
   type: ComponentType;
   variants: string[];
@@ -127,7 +128,7 @@ function makeRecord({ name, type, variants, page, nodeId, notes, composition, fi
   exportDate: string;
 }): ComponentRecord {
   return {
-    id: componentId(type, name),
+    id: id ?? componentId(type, name),
     name,
     type,
     variants,
@@ -145,8 +146,66 @@ function makeRecord({ name, type, variants, page, nodeId, notes, composition, fi
   };
 }
 
+function parseComponentTrackerExport(value: JsonObject): ComponentRecord[] | null {
+  const groupedEntries: Array<[string, JsonObject, ComponentType]> = [
+    ...entries(value.baseComponents).map(([key, item]) => [key, item, "Base"] as [string, JsonObject, ComponentType]),
+    ...entries(value.slotComponents).map(([key, item]) => [key, item, "Slot"] as [string, JsonObject, ComponentType]),
+    ...entries(value.modules).map(([key, item]) => [key, item, "Module"] as [string, JsonObject, ComponentType]),
+    ...entries(value.pageStructures).map(([key, item]) => [key, item, "Page structure"] as [string, JsonObject, ComponentType]),
+  ];
+  if (!groupedEntries.length) return null;
+  const isTrackerSchema = isObject(value.metadata) || groupedEntries.some(([, item]) => "category" in item || "composedOf" in item || "usedIn" in item);
+  if (!isTrackerSchema) return null;
+
+  const metadata = isObject(value.metadata) ? value.metadata : {};
+  const exportDate = text(metadata.generatedAt) || text(value.exportDate);
+  const fileKey = text(value.fileKey);
+  const recordsByNodeId = new Map<string, ComponentRecord>();
+
+  for (const [nodeId, item, fallbackType] of groupedEntries) {
+    if (isBuildingBlock(item)) continue;
+    const type = classificationType(item.category) ?? classificationType(item.classification) ?? fallbackType;
+    const name = text(item.name) || nodeId;
+    const record = makeRecord({
+      id: `figma-node-${nodeId.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}`,
+      name,
+      type,
+      variants: Array.isArray(item.variants) ? item.variants.map(text).filter(Boolean) : [],
+      page: text(item.page),
+      nodeId,
+      notes: text(item.description) || undefined,
+      composition: [],
+      fileKey,
+      exportDate,
+    });
+    recordsByNodeId.set(nodeId, record);
+  }
+
+  for (const [nodeId, item] of groupedEntries) {
+    const record = recordsByNodeId.get(nodeId);
+    if (!record) continue;
+    const composition = (Array.isArray(item.composedOf) ? item.composedOf : []).filter(isObject).flatMap((reference) => {
+      const referenceId = text(reference.id);
+      const target = recordsByNodeId.get(referenceId);
+      if (!target) return [];
+      return [{
+        name: target.name,
+        kind: target.type,
+        componentId: target.id,
+        figmaNodeId: referenceId,
+      } satisfies CompositionNode];
+    });
+    record.composition = composition;
+    record.composedOf = composition.map((item) => item.name);
+  }
+
+  return [...recordsByNodeId.values()];
+}
+
 export function parseFigmaComponentExport(value: unknown): ComponentRecord[] {
   if (!isObject(value)) throw new Error("The selected file is not a valid Figma component export.");
+  const trackerRecords = parseComponentTrackerExport(value);
+  if (trackerRecords) return trackerRecords;
   const moduleEntries = entries(value.modules);
   const slotEntries = entries(value.slotComponents);
   if (!moduleEntries.length && !slotEntries.length) throw new Error("No modules or slot components were found in this JSON file.");
@@ -205,16 +264,67 @@ export function parseFigmaComponentExport(value: unknown): ComponentRecord[] {
   return [...records.values()];
 }
 
-export function mergeImportedComponents(current: ComponentRecord[], imported: ComponentRecord[]) {
+function parseJsonDocuments(source: string): unknown {
+  try {
+    return JSON.parse(source);
+  } catch {
+    const documents: unknown[] = [];
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = 0; index < source.length; index += 1) {
+      const character = source[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') {
+        inString = true;
+        continue;
+      }
+      if (character === "{" || character === "[") {
+        if (depth === 0) start = index;
+        depth += 1;
+      } else if (character === "}" || character === "]") {
+        depth -= 1;
+        if (depth === 0 && start >= 0) {
+          documents.push(JSON.parse(source.slice(start, index + 1)));
+          start = -1;
+        }
+      } else if (depth === 0 && !/\s/.test(character)) {
+        throw new Error("The selected file is not valid JSON.");
+      }
+    }
+    if (depth !== 0 || inString || !documents.length) throw new Error("The selected file is not valid JSON.");
+    if (documents.length === 1) return documents[0];
+    if (!documents.every(isObject)) throw new Error("The selected file contains incompatible JSON documents.");
+    return Object.assign({}, ...documents);
+  }
+}
+
+export function parseFigmaComponentExportText(source: string): ComponentRecord[] {
+  return parseFigmaComponentExport(parseJsonDocuments(source));
+}
+
+export function mergeImportedComponents(current: ComponentRecord[], imported: ComponentRecord[], options: { preserveManualRelationships?: boolean } = {}) {
   let added = 0;
   let updated = 0;
   const next = [...current];
 
   for (const incoming of imported) {
-    const matchIndex = next.findIndex((item) =>
-      (incoming.source?.nodeId && item.source?.nodeId === incoming.source.nodeId) ||
-      (item.type === incoming.type && slug(item.name) === slug(incoming.name))
-    );
+    let matchIndex = incoming.source?.nodeId
+      ? next.findIndex((item) => item.source?.nodeId === incoming.source?.nodeId)
+      : -1;
+    if (matchIndex === -1) {
+      matchIndex = next.findIndex((item) =>
+        (!incoming.source?.nodeId || !item.source?.nodeId) &&
+        item.type === incoming.type && slug(item.name) === slug(incoming.name)
+      );
+    }
     if (matchIndex === -1) {
       next.unshift(incoming);
       added += 1;
@@ -222,13 +332,15 @@ export function mergeImportedComponents(current: ComponentRecord[], imported: Co
     }
 
     const existing = next[matchIndex];
+    const preserveRelationships = Boolean(options.preserveManualRelationships && existing.relationshipsModified);
     next[matchIndex] = {
       ...existing,
       name: incoming.name,
       type: incoming.type,
       variants: [...new Set([...existing.variants, ...incoming.variants])],
-      composedOf: incoming.composedOf,
-      composition: incoming.composition,
+      composedOf: preserveRelationships ? existing.composedOf : incoming.composedOf,
+      composition: preserveRelationships ? existing.composition : incoming.composition,
+      relationshipsModified: preserveRelationships,
       links: { ...incoming.links, ...existing.links, figma: incoming.links.figma ?? existing.links.figma },
       notes: existing.notes || incoming.notes,
       source: incoming.source,
@@ -237,5 +349,22 @@ export function mergeImportedComponents(current: ComponentRecord[], imported: Co
     updated += 1;
   }
 
-  return { components: next, added, updated };
+  const targetsByNodeId = new Map(next.filter((item) => item.source?.nodeId).map((item) => [item.source!.nodeId!, item]));
+  const targetsById = new Map(next.map((item) => [item.id, item]));
+  function remapComposition(nodes: CompositionNode[] = []): CompositionNode[] {
+    return nodes.map((node) => {
+      const target = (node.figmaNodeId ? targetsByNodeId.get(node.figmaNodeId) : undefined) ?? (node.componentId ? targetsById.get(node.componentId) : undefined);
+      const remapped: CompositionNode = {
+        ...node,
+        ...(target ? { name: target.name, kind: target.type, componentId: target.id } : {}),
+      };
+      return node.children ? { ...remapped, children: remapComposition(node.children) } : remapped;
+    });
+  }
+  const components = next.map((item) => {
+    const composition = remapComposition(item.composition);
+    return { ...item, composition, composedOf: composition.map((node) => node.name) };
+  });
+
+  return { components, added, updated };
 }

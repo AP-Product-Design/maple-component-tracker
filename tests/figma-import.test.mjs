@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeImportedComponents, parseFigmaComponentExport } from "../app/figma-import.ts";
+import { mergeImportedComponents, parseFigmaComponentExport, parseFigmaComponentExportText } from "../app/figma-import.ts";
 
 const exportFixture = {
   fileKey: "figma-file-key",
@@ -76,4 +76,90 @@ test("repeat imports preserve manually managed workflow fields", () => {
   assert.deepEqual(result.components[0].links.jira, ["https://jira.example/MAPLE-1"]);
   assert.equal(result.components[0].notes, "Editor-authored note");
   assert.match(result.components[0].links.figma, /figma-file-key/);
+});
+
+test("imports the component tracker export schema and links relationships by Figma node id", () => {
+  const records = parseFigmaComponentExport({
+    metadata: { generatedAt: "2026-08-18" },
+    baseComponents: {
+      "1:1": { name: "Title", category: "Base component", page: "Typography", composedOf: [], usedIn: [{ id: "2:2", name: "Story card", category: "Slot component" }] },
+      "1:2": { name: "Building blocks/.frame", category: "Base component", page: "Frames", composedOf: [], usedIn: [] },
+    },
+    slotComponents: {
+      "2:2": { name: "Story card", category: "Slot component", page: "Cards", composedOf: [{ id: "1:1", name: "Title", category: "Base component" }], usedIn: [] },
+    },
+    modules: {},
+  });
+
+  assert.deepEqual(records.map((record) => `${record.type}:${record.name}`).sort(), ["Base:Title", "Slot:Story card"]);
+  const title = records.find((record) => record.name === "Title");
+  const storyCard = records.find((record) => record.name === "Story card");
+  assert.equal(storyCard.composition[0].componentId, title.id);
+  assert.equal(storyCard.source.nodeId, "2:2");
+  assert.equal(storyCard.updated, "Aug 18, 2026");
+});
+
+test("accepts consecutive JSON documents produced by the tracker export", () => {
+  const source = [
+    JSON.stringify({ metadata: { generatedAt: "2026-08-18" } }),
+    JSON.stringify({ baseComponents: { "1:1": { name: "Title", category: "Base component", page: "Typography", composedOf: [], usedIn: [] } } }),
+    JSON.stringify({ slotComponents: {} }),
+    JSON.stringify({ modules: {} }),
+  ].join("\n");
+  const records = parseFigmaComponentExportText(source);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].name, "Title");
+});
+
+test("keeps same-name Figma records with different node ids distinct", () => {
+  const imported = parseFigmaComponentExport({
+    metadata: { generatedAt: "2026-08-18" },
+    baseComponents: {},
+    slotComponents: {},
+    modules: {
+      "3:1": { name: "Infobox", category: "Module", page: "A", composedOf: [], usedIn: [] },
+      "3:2": { name: "Infobox", category: "Module", page: "B", composedOf: [], usedIn: [] },
+    },
+  });
+  const result = mergeImportedComponents([], imported);
+  assert.equal(result.added, 2);
+  assert.equal(result.components.length, 2);
+});
+
+test("remaps imported relationships to ids retained by existing records", () => {
+  const imported = parseFigmaComponentExport({
+    metadata: { generatedAt: "2026-08-18" },
+    baseComponents: {
+      "1:1": { name: "Title", category: "Base component", page: "Typography", composedOf: [], usedIn: [] },
+    },
+    slotComponents: {
+      "2:2": { name: "Story card", category: "Slot component", page: "Cards", composedOf: [{ id: "1:1", name: "Title", category: "Base component" }], usedIn: [] },
+    },
+    modules: {},
+  });
+  const importedTitle = imported.find((record) => record.name === "Title");
+  const existingTitle = { ...importedTitle, id: "legacy-title-id" };
+  const result = mergeImportedComponents([existingTitle], imported);
+  const storyCard = result.components.find((record) => record.name === "Story card");
+  assert.equal(storyCard.composition[0].componentId, "legacy-title-id");
+});
+
+test("optionally preserves relationships marked as manually modified", () => {
+  const imported = parseFigmaComponentExport(exportFixture);
+  const incomingModule = imported.find((record) => record.type === "Module");
+  const manualComposition = [{ name: "Manual dependency", kind: "Base", componentId: "manual-dependency" }];
+  const existingModule = {
+    ...incomingModule,
+    composition: manualComposition,
+    composedOf: ["Manual dependency"],
+    relationshipsModified: true,
+  };
+
+  const preserved = mergeImportedComponents([existingModule], [incomingModule], { preserveManualRelationships: true });
+  assert.deepEqual(preserved.components[0].composition, manualComposition);
+  assert.equal(preserved.components[0].relationshipsModified, true);
+
+  const replaced = mergeImportedComponents([existingModule], [incomingModule], { preserveManualRelationships: false });
+  assert.notDeepEqual(replaced.components[0].composition, manualComposition);
+  assert.equal(replaced.components[0].relationshipsModified, false);
 });

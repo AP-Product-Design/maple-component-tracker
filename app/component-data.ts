@@ -33,6 +33,7 @@ export type ComponentRecord = {
   releaseHistory: string[];
   composedOf: string[];
   composition?: CompositionNode[];
+  relationshipsModified?: boolean;
   links: {
     figma?: string;
     zeroheight?: string;
