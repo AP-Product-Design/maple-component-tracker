@@ -544,19 +544,19 @@ export default function Home() {
           <div className="type-guide-grid">
             <article>
               <h2>Base component</h2>
-              <p>The smallest building blocks in Maple—buttons, eyebrows, timestamps, and titles. Base components carry no inherent awareness of layout context; they consume tokens directly and adapt to whatever container or module they&apos;re placed in.</p>
+              <p>Base components are the smallest reusable interface elements with a defined semantic, visual, content, or interaction contract. A base component does not assume that it belongs to a particular module or page structure.</p>
             </article>
             <article>
               <h2>Slot component</h2>
-              <p>A reusable component that can appear across multiple modules or page structures, rather than being fixed to a single one. Slots may function as placeholders for dynamic content within a module (e.g., Live updates slot), or as portable, self-contained units—composed of base components—that multiple modules can incorporate (e.g., Story card, Story link).</p>
+              <p>Slot components are portable, self-contained units designed to fill one or more defined slots within modules or page structures. They are generally composed of base components and represent a recognizable editorial or product concept. A slot component can appear in multiple modules or page structures without becoming structurally tied to any one of them.</p>
             </article>
             <article>
               <h2>Module</h2>
-              <p>Larger UI patterns composed primarily of base components and slot components. List E, Narrow List A, and our other list items are considered modules.</p>
+              <p>Modules are contextual UI presentations that organize base components and slot components into a meaningful section, collection, or editorial arrangement. Modules may expose slots through which approved components are supplied.</p>
             </article>
             <article>
               <h2>Page structure</h2>
-              <p>The top-level assembly—an arrangement of modules per a page template (article page, homepage, etc.). Page structures define ordering, spacing rhythm, and which modules are eligible for that context, but shouldn&apos;t override module or slot internals.</p>
+              <p>Page structures are top-level templates that arrange modules and page-level regions into a complete experience. A page structure defines the page&apos;s composition rules without overriding the internals of its modules or components.</p>
             </article>
           </div>
         </details>
