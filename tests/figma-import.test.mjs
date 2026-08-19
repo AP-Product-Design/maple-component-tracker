@@ -163,3 +163,18 @@ test("optionally preserves relationships marked as manually modified", () => {
   assert.notDeepEqual(replaced.components[0].composition, manualComposition);
   assert.equal(replaced.components[0].relationshipsModified, false);
 });
+
+test("imports a formatted Maple inventory backup without losing record data", () => {
+  const component = {
+    ...parseFigmaComponentExport(exportFixture)[0],
+    status: "Ready",
+    notes: "Keep this dashboard-authored note.",
+    relationshipsModified: true,
+  };
+  const backup = JSON.stringify({
+    metadata: { format: "maple-component-tracker", schemaVersion: 1, generatedAt: "2026-08-19" },
+    components: [component],
+  });
+  const restored = parseFigmaComponentExportText(backup);
+  assert.deepEqual(restored, [JSON.parse(JSON.stringify(component))]);
+});

@@ -227,11 +227,28 @@ td:first-child { padding-left: 18px; }
 .import-counts { margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 7px; }
 .import-counts span { padding: 6px 8px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .import-counts strong { color: var(--ink); }
+.import-mode { margin: 0 0 14px; padding: 0; border: 0; }
+.import-mode legend { margin-bottom: 7px; color: var(--ink); font-size: 11px; font-weight: 800; }
+.import-mode label { min-height: 62px; padding: 11px 13px; display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line-dark); background: var(--surface); cursor: pointer; }
+.import-mode label + label { border-top: 0; }
+.import-mode label.selected { position: relative; z-index: 1; border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.import-mode label.selected.destructive { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+.import-mode input { width: 15px; height: 15px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--ink); }
+.import-mode .destructive input { accent-color: var(--red); }
+.import-mode strong, .import-mode small { display: block; }
+.import-mode strong { color: var(--ink); font-size: 12px; }
+.import-mode .destructive strong { color: var(--red); }
+.import-mode small { margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 400; line-height: 1.4; }
 .preserve-option { padding: 14px; display: flex; align-items: flex-start; gap: 11px; border: 1px solid var(--line-dark); background: var(--surface); cursor: pointer; }
 .preserve-option input { width: 16px; height: 16px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--accent); }
 .preserve-option strong, .preserve-option small { display: block; }
 .preserve-option strong { color: var(--ink); font-size: 12px; }
 .preserve-option small { margin-top: 5px; color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.45; }
+.replace-confirmation { padding: 14px; display: flex; align-items: flex-start; gap: 11px; border: 1px solid var(--red); background: var(--red-bg); cursor: pointer; }
+.replace-confirmation input { width: 16px; height: 16px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--red); }
+.replace-confirmation strong, .replace-confirmation small { display: block; }
+.replace-confirmation strong { color: var(--red); font-size: 12px; }
+.replace-confirmation small { margin-top: 5px; color: var(--ink); font-size: 11px; font-weight: 400; line-height: 1.45; }
 .import-review-actions { margin: 0; padding: 20px 24px 24px; }
 
 @media (max-width: 900px) {

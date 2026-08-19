@@ -146,6 +146,21 @@ function makeRecord({ id, name, type, variants, page, nodeId, notes, composition
   };
 }
 
+function parseInventoryBackup(value: JsonObject): ComponentRecord[] | null {
+  const metadata = isObject(value.metadata) ? value.metadata : {};
+  if (text(metadata.format) !== "maple-component-tracker") return null;
+  if (!Array.isArray(value.components) || !value.components.length) throw new Error("This Maple inventory backup does not contain any components.");
+  const records = value.components.filter(isObject);
+  const valid = records.every((record) =>
+    Boolean(text(record.id)) && Boolean(text(record.name)) && Boolean(classificationType(record.type)) &&
+    Array.isArray(record.variants) && Array.isArray(record.releaseHistory) && Array.isArray(record.composedOf) &&
+    (record.composition === undefined || Array.isArray(record.composition)) &&
+    isObject(record.adoption) && isObject(record.links) && Boolean(text(record.currentVersion))
+  );
+  if (!valid || records.length !== value.components.length) throw new Error("This Maple inventory backup contains invalid component records.");
+  return records as unknown as ComponentRecord[];
+}
+
 function parseComponentTrackerExport(value: JsonObject): ComponentRecord[] | null {
   const groupedEntries: Array<[string, JsonObject, ComponentType]> = [
     ...entries(value.baseComponents).map(([key, item]) => [key, item, "Base"] as [string, JsonObject, ComponentType]),
@@ -204,6 +219,8 @@ function parseComponentTrackerExport(value: JsonObject): ComponentRecord[] | nul
 
 export function parseFigmaComponentExport(value: unknown): ComponentRecord[] {
   if (!isObject(value)) throw new Error("The selected file is not a valid Figma component export.");
+  const inventoryBackup = parseInventoryBackup(value);
+  if (inventoryBackup) return inventoryBackup;
   const trackerRecords = parseComponentTrackerExport(value);
   if (trackerRecords) return trackerRecords;
   const moduleEntries = entries(value.modules);

@@ -32,7 +32,13 @@ const adoptionStatuses: Array<AdoptionStatus | "All statuses"> = [
 const platformLabels: Record<Platform, string> = { web: "Web", ios: "iOS", android: "Android" };
 type ColumnFilterKey = "type" | "design" | "support" | Platform;
 type OpenColumnFilter = { key: ColumnFilterKey; top: number; left: number };
-type PendingImport = { fileName: string; components: ComponentRecord[]; preserveManualRelationships: boolean };
+type PendingImport = {
+  fileName: string;
+  components: ComponentRecord[];
+  mode: "merge" | "replace";
+  preserveManualRelationships: boolean;
+  confirmReplace: boolean;
+};
 
 const typeLabel: Record<ComponentType, string> = {
   Base: "Base", Slot: "Slot", Module: "Module", "Page structure": "Page structure",
@@ -393,7 +399,7 @@ export default function Home() {
 
     try {
       const imported = parseFigmaComponentExportText(await file.text());
-      setPendingImport({ fileName: file.name, components: imported, preserveManualRelationships: true });
+      setPendingImport({ fileName: file.name, components: imported, mode: "merge", preserveManualRelationships: true, confirmReplace: false });
     } catch (error) {
       setImportNotice({ tone: "error", message: error instanceof Error ? error.message : "This JSON file could not be imported." });
     }
@@ -402,9 +408,23 @@ export default function Home() {
   async function confirmFigmaImport() {
     if (!pendingImport) return;
     try {
-      const result = mergeImportedComponents(components, pendingImport.components, { preserveManualRelationships: pendingImport.preserveManualRelationships });
       const { db } = getFirebaseServices();
       const batch = writeBatch(db);
+      if (pendingImport.mode === "replace") {
+        if (!pendingImport.confirmReplace) return;
+        const importedIds = new Set(pendingImport.components.map((component) => component.id));
+        for (const component of components) {
+          if (!importedIds.has(component.id)) batch.delete(doc(db, "components", component.id));
+        }
+        for (const component of pendingImport.components) batch.set(doc(db, "components", component.id), component);
+        await batch.commit();
+        const removed = components.filter((component) => !importedIds.has(component.id)).length;
+        setImportNotice({ tone: "success", message: `${pendingImport.fileName}: the inventory was replaced with ${pendingImport.components.length} components and ${removed} stale record${removed === 1 ? " was" : "s were"} removed.` });
+        setPendingImport(null);
+        setDetailTrail([]);
+        return;
+      }
+      const result = mergeImportedComponents(components, pendingImport.components, { preserveManualRelationships: pendingImport.preserveManualRelationships });
       for (const component of result.components) batch.set(doc(db, "components", component.id), component);
       await batch.commit();
       setImportNotice({
@@ -415,6 +435,28 @@ export default function Home() {
     } catch {
       setImportNotice({ tone: "error", message: "The Figma import could not be published. Check your editor access and try again." });
     }
+  }
+
+  function exportCurrentInventory() {
+    const generatedAt = new Date().toISOString();
+    const payload = {
+      metadata: {
+        format: "maple-component-tracker",
+        schemaVersion: 1,
+        generatedAt,
+        totalComponents: components.length,
+      },
+      components,
+    };
+    const url = URL.createObjectURL(new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `maple-component-inventory-${generatedAt.slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setImportNotice({ tone: "success", message: `${components.length} component records were exported as a re-importable JSON backup.` });
   }
 
   async function publishStarterInventory() {
@@ -472,7 +514,7 @@ export default function Home() {
         </a>
         <div className="header-actions">
           <span className="prototype-state"><i /> Live · {isEditor ? "Editor" : "Viewer"}</span>
-          {isEditor && <><input ref={importInput} className="sr-only" type="file" accept="application/json,.json" onChange={importFigmaJson} /><button className="button secondary import-button" onClick={() => importInput.current?.click()}><span className="import-wide">Import Figma JSON</span><span className="import-short">Import JSON</span></button><button className="button primary" onClick={() => setEditing(emptyComponent())}>＋ Add component</button></>}
+          {isEditor && <><button className="button secondary export-button" onClick={exportCurrentInventory}><span className="import-wide">Export inventory</span><span className="import-short">Export</span></button><input ref={importInput} className="sr-only" type="file" accept="application/json,.json" onChange={importFigmaJson} /><button className="button secondary import-button" onClick={() => importInput.current?.click()}><span className="import-wide">Import JSON</span><span className="import-short">Import</span></button><button className="button primary" onClick={() => setEditing(emptyComponent())}>＋ Add component</button></>}
           <button className="account-button" onClick={() => void signOut(getFirebaseServices().auth)} title={user.email ?? "Signed in"}>{user.email?.split("@")[0]} <span>Sign out</span></button>
         </div>
       </header>
@@ -596,13 +638,14 @@ export default function Home() {
       )}
 
       {editing && <Editor component={editing} components={components} onChange={setEditing} onCancel={() => setEditing(null)} onSave={saveComponent} onDelete={deleteComponent} canDelete={components.some((component) => component.id === editing.id)} />}
-      {pendingImport && <ImportReview pending={pendingImport} onChange={setPendingImport} onCancel={() => setPendingImport(null)} onConfirm={() => void confirmFigmaImport()} />}
+      {pendingImport && <ImportReview pending={pendingImport} currentCount={components.length} onChange={setPendingImport} onCancel={() => setPendingImport(null)} onConfirm={() => void confirmFigmaImport()} />}
     </main>
   );
 }
 
-function ImportReview({ pending, onChange, onCancel, onConfirm }: {
+function ImportReview({ pending, currentCount, onChange, onCancel, onConfirm }: {
   pending: PendingImport;
+  currentCount: number;
   onChange: (pending: PendingImport) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -610,15 +653,23 @@ function ImportReview({ pending, onChange, onCancel, onConfirm }: {
   const counts = componentTypes.slice(1).map((type) => ({ type, count: pending.components.filter((component) => component.type === type).length })).filter((item) => item.count > 0);
   return <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
     <section className="import-review" role="dialog" aria-modal="true" aria-labelledby="import-review-title" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="editor-header"><div><span>Figma import</span><h2 id="import-review-title">Review import</h2></div><button onClick={onCancel} aria-label="Close">×</button></div>
+      <div className="editor-header"><div><span>Inventory import</span><h2 id="import-review-title">Review import</h2></div><button onClick={onCancel} aria-label="Close">×</button></div>
       <div className="import-review-body">
         <p><strong>{pending.fileName}</strong> contains {pending.components.length} tracked components.</p>
         <div className="import-counts">{counts.map(({ type, count }) => <span key={type}><strong>{count}</strong> {type}</span>)}</div>
-        <label className="preserve-option"><input type="checkbox" checked={pending.preserveManualRelationships} onChange={(event) => onChange({ ...pending, preserveManualRelationships: event.target.checked })} /><span><strong>Preserve manually edited relationships</strong><small>Components marked as manually changed keep their current “Composed of” and “Used in” relationships. Untouched components continue to refresh from Figma.</small></span></label>
+        <fieldset className="import-mode"><legend>Import behavior</legend>
+          <label className={pending.mode === "merge" ? "selected" : ""}><input type="radio" name="import-mode" value="merge" checked={pending.mode === "merge"} onChange={() => onChange({ ...pending, mode: "merge", confirmReplace: false })} /><span><strong>Merge with current inventory</strong><small>Add new components and update matching records while keeping records absent from this file.</small></span></label>
+          <label className={pending.mode === "replace" ? "selected destructive" : "destructive"}><input type="radio" name="import-mode" value="replace" checked={pending.mode === "replace"} onChange={() => onChange({ ...pending, mode: "replace", confirmReplace: false })} /><span><strong>Replace entire inventory</strong><small>Remove records absent from this file and make these {pending.components.length} components the complete inventory.</small></span></label>
+        </fieldset>
+        {pending.mode === "merge" ? <label className="preserve-option"><input type="checkbox" checked={pending.preserveManualRelationships} onChange={(event) => onChange({ ...pending, preserveManualRelationships: event.target.checked })} /><span><strong>Preserve manually edited relationships</strong><small>Components marked as manually changed keep their current “Composed of” and “Used in” relationships. Untouched components continue to refresh from Figma.</small></span></label> : <label className="replace-confirmation"><input type="checkbox" checked={pending.confirmReplace} onChange={(event) => onChange({ ...pending, confirmReplace: event.target.checked })} /><span><strong>I understand this will replace the entire inventory with {componentsLabel(pending.components.length)}.</strong><small>{componentsLabel(currentCount)} currently in Firestore will be overwritten or removed. Editor permissions and other Firebase data will not be changed.</small></span></label>}
       </div>
-      <div className="editor-actions import-review-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button type="button" className="button primary" onClick={onConfirm}>Import components</button></div>
+      <div className="editor-actions import-review-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button type="button" className={`button ${pending.mode === "replace" ? "danger-solid" : "primary"}`} onClick={onConfirm} disabled={pending.mode === "replace" && !pending.confirmReplace}>{pending.mode === "replace" ? "Replace inventory" : "Import components"}</button></div>
     </section>
   </div>;
+}
+
+function componentsLabel(count: number) {
+  return `${count} component${count === 1 ? "" : "s"}`;
 }
 
 function AccessScreen({ title, message, actionLabel, onAction, error = false }: {
