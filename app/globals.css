@@ -107,7 +107,7 @@ button, select { cursor: pointer; }
 .active-filter-row > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .active-filter-row span { padding: 5px 8px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); font-size: 11px; font-weight: 500; }
 .active-filter-row button { flex: 0 0 auto; padding: 5px 0; border: 0; border-bottom: 1px solid var(--ink); background: transparent; color: var(--ink); font-size: 11px; font-weight: 700; }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow: visible; }
 table { width: 100%; min-width: 1160px; border-collapse: collapse; table-layout: fixed; }
 th { height: 42px; padding: 0 12px; position: sticky; top: 64px; z-index: 10; color: var(--ink); background: var(--canvas); border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 var(--line); text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 th:first-child { width: 230px; padding-left: 18px; } th:nth-child(2) { width: 105px; } th:nth-child(3) { width: 120px; } th:nth-child(4) { width: 150px; } th:nth-child(5), th:nth-child(6), th:nth-child(7) { width: 140px; }
@@ -252,6 +252,7 @@ td:first-child { padding-left: 18px; }
 .import-review-actions { margin: 0; padding: 20px 24px 24px; }
 
 @media (max-width: 900px) {
+  .table-wrap { overflow-x: auto; }
   .summary { grid-template-columns: 1fr 1fr; }.summary article:nth-child(2) { border-right: 0; }.summary article:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
 }
 
