@@ -23,8 +23,8 @@ const componentTypes: Array<ComponentType | "All types"> = [
 const designStatuses: Array<ComponentStatus | "All design statuses"> = [
   "All design statuses", "Proposed", "In design", "Ready", "Deprecated",
 ];
-const supportStatuses: Array<SupportStatus | "All platform scopes"> = [
-  "All platform scopes", "Full", "Partial", "Planned",
+const supportStatuses: Array<SupportStatus | "All cross-platform statuses"> = [
+  "All cross-platform statuses", "Full", "Partial", "No", "Planned",
 ];
 const adoptionStatuses: Array<AdoptionStatus | "All statuses"> = [
   "All statuses", "Needs Jira ticket", "Backlog", "In dev", "In review", "Released", "Blocked", "Not supported",
@@ -89,7 +89,7 @@ function normalizeComponent(record: ComponentRecord): ComponentRecord {
   const releaseHistory = record.releaseHistory ?? legacy.versionHistory?.map((version) => version.version ?? "").filter(Boolean) ?? [];
   return {
     ...record,
-    support: (record.support as string) === "None" ? "Planned" : (record.support ?? "Planned"),
+    support: (record.support as string) === "None" ? "No" : (record.support ?? "Planned"),
     adoption,
     currentVersion,
     releaseHistory: [...new Set(releaseHistory.filter((version) => version !== currentVersion))],
@@ -138,7 +138,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<(typeof componentTypes)[number]>("All types");
   const [designFilter, setDesignFilter] = useState<(typeof designStatuses)[number]>("All design statuses");
-  const [supportFilter, setSupportFilter] = useState<(typeof supportStatuses)[number]>("All platform scopes");
+  const [supportFilter, setSupportFilter] = useState<(typeof supportStatuses)[number]>("All cross-platform statuses");
   const [platformFilters, setPlatformFilters] = useState<Record<Platform, (typeof adoptionStatuses)[number]>>({
     web: "All statuses", ios: "All statuses", android: "All statuses",
   });
@@ -229,7 +229,7 @@ export default function Home() {
       return matchesQuery &&
         (typeFilter === "All types" || component.type === typeFilter) &&
         (designFilter === "All design statuses" || component.status === designFilter) &&
-        (supportFilter === "All platform scopes" || component.support === supportFilter);
+        (supportFilter === "All cross-platform statuses" || component.support === supportFilter);
     });
   }, [components, query, typeFilter, designFilter, supportFilter]);
 
@@ -240,13 +240,13 @@ export default function Home() {
   ), [highLevelMatches, platformFilters]);
 
   const selectedComponent = components.find((component) => component.id === detailTrail.at(-1));
-  const activeHighLevel = [typeFilter !== "All types", designFilter !== "All design statuses", supportFilter !== "All platform scopes", Boolean(query)].filter(Boolean).length;
+  const activeHighLevel = [typeFilter !== "All types", designFilter !== "All design statuses", supportFilter !== "All cross-platform statuses", Boolean(query)].filter(Boolean).length;
   const activePlatform = Object.values(platformFilters).filter((value) => value !== "All statuses").length;
   const activeFacetCount = activeHighLevel + activePlatform - (query ? 1 : 0);
   const activeFacets = [
     typeFilter !== "All types" ? `Type: ${typeFilter}` : "",
     designFilter !== "All design statuses" ? `Design: ${designFilter}` : "",
-    supportFilter !== "All platform scopes" ? `Platform scope: ${supportFilter}` : "",
+    supportFilter !== "All cross-platform statuses" ? `Cross Platform: ${supportFilter}` : "",
     ...(["web", "ios", "android"] as Platform[]).map((platform) => platformFilters[platform] !== "All statuses" ? `${platformLabels[platform]}: ${platformFilters[platform]}` : ""),
   ].filter(Boolean);
   const needsPlanning = components.filter((component) => Object.values(component.adoption).includes("Needs Jira ticket")).length;
@@ -281,7 +281,7 @@ export default function Home() {
   function columnFilterLabel(key: ColumnFilterKey): string {
     if (key === "type") return "Type";
     if (key === "design") return "Design";
-    if (key === "support") return "Platform scope";
+    if (key === "support") return "Cross Platform";
     return platformLabels[key];
   }
 
@@ -495,7 +495,7 @@ export default function Home() {
     setQuery("");
     setTypeFilter("All types");
     setDesignFilter("All design statuses");
-    setSupportFilter("All platform scopes");
+    setSupportFilter("All cross-platform statuses");
     setPlatformFilters({ web: "All statuses", ios: "All statuses", android: "All statuses" });
   }
 
@@ -577,7 +577,7 @@ export default function Home() {
               <div className="mobile-filter-grid">
                 <Filter label="Type" value={typeFilter} options={componentTypes} onChange={(value) => setTypeFilter(value as typeof typeFilter)} />
                 <Filter label="Design status" value={designFilter} options={designStatuses} onChange={(value) => setDesignFilter(value as typeof designFilter)} />
-                <Filter label="Platform scope" value={supportFilter} options={supportStatuses} onChange={(value) => setSupportFilter(value as typeof supportFilter)} />
+                <Filter label="Cross Platform" value={supportFilter} options={supportStatuses} onChange={(value) => setSupportFilter(value as typeof supportFilter)} />
                 {(["web", "ios", "android"] as Platform[]).map((platform) => <Filter key={platform} label={platformLabels[platform]} value={platformFilters[platform]} options={adoptionStatuses} onChange={(value) => setPlatformFilters((current) => ({ ...current, [platform]: value as (typeof adoptionStatuses)[number] }))} />)}
               </div>
             </details>
@@ -594,7 +594,7 @@ export default function Home() {
                 <th>Component</th>
                 <th><ColumnFilterButton filterKey="type" label="Type" active={typeFilter !== "All types"} expanded={openColumnFilter?.key === "type"} onClick={toggleColumnFilter} /></th>
                 <th><ColumnFilterButton filterKey="design" label="Design" active={designFilter !== "All design statuses"} expanded={openColumnFilter?.key === "design"} onClick={toggleColumnFilter} /></th>
-                <th><ColumnFilterButton filterKey="support" label="Platform scope" active={supportFilter !== "All platform scopes"} expanded={openColumnFilter?.key === "support"} onClick={toggleColumnFilter} /></th>
+                <th><ColumnFilterButton filterKey="support" label="Cross Platform" active={supportFilter !== "All cross-platform statuses"} expanded={openColumnFilter?.key === "support"} onClick={toggleColumnFilter} /></th>
                 {(["web", "ios", "android"] as Platform[]).map((platform) => <th key={platform}><ColumnFilterButton filterKey={platform} label={platformLabels[platform]} active={platformFilters[platform] !== "All statuses"} expanded={openColumnFilter?.key === platform} onClick={toggleColumnFilter} /></th>)}
               </tr></thead>
               <tbody>
@@ -743,7 +743,7 @@ function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClos
         <h3>Current status</h3>
         <div className="status-grid">
           <div><span>Design</span><Status value={component.status} /></div>
-          <div><span>Platform scope</span><Status value={component.support} /></div>
+          <div><span>Cross Platform</span><Status value={component.support} /></div>
           <div><span>Web</span><Status value={component.adoption.web} /></div>
           <div><span>iOS</span><Status value={component.adoption.ios} /></div>
           <div><span>Android</span><Status value={component.adoption.android} /></div>
@@ -824,7 +824,7 @@ function Editor({ component, components, onChange, onCancel, onSave, onDelete, c
           <label className="wide">Name<input required autoFocus value={component.name} onChange={(event) => onChange({ ...component, name: event.target.value })} /></label>
           <label>Type<select value={component.type} onChange={(event) => onChange({ ...component, type: event.target.value as ComponentType })}>{componentTypes.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
           <label>Design status<select value={component.status} onChange={(event) => onChange({ ...component, status: event.target.value as ComponentStatus })}>{designStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
-          <label className="wide">Platform scope<select value={component.support} onChange={(event) => onChange({ ...component, support: event.target.value as SupportStatus })}>{supportStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
+          <label className="wide">Cross Platform<select value={component.support} onChange={(event) => onChange({ ...component, support: event.target.value as SupportStatus })}>{supportStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
           <h3 className="form-section-title">Release</h3>
           <label className="wide">Current version<input required pattern="[0-9]+\.[0-9]+(\.[0-9]+)?" title="Use a semantic version such as 1.0, 1.1, or 2.0" value={component.currentVersion} onChange={(event) => onChange({ ...component, currentVersion: event.target.value })} /></label>
           <h3 className="form-section-title">Platform rollout</h3>

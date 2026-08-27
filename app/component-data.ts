@@ -1,6 +1,6 @@
 export type ComponentType = "Base" | "Slot" | "Module" | "Page structure";
 export type ComponentStatus = "Proposed" | "In design" | "Ready" | "Deprecated";
-export type SupportStatus = "Full" | "Partial" | "Planned";
+export type SupportStatus = "Full" | "Partial" | "No" | "Planned";
 export type AdoptionStatus =
   | "Needs Jira ticket"
   | "Backlog"
