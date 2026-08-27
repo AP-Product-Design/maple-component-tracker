@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { collection, doc, onSnapshot, writeBatch } from "firebase/firestore";
@@ -16,6 +16,7 @@ import {
 } from "./component-data";
 import { mergeImportedComponents, parseFigmaComponentExportText } from "./figma-import";
 import { allowedEmailDomain, firebaseConfigured, getFirebaseServices } from "./firebase";
+import { buildComponentTableRows, isGroupableType, rollupStatus } from "./component-groups";
 
 const componentTypes: Array<ComponentType | "All types"> = [
   "All types", "Base", "Slot", "Module", "Page structure",
@@ -84,11 +85,14 @@ function jiraLinks(value: ComponentRecord["links"]["jira"] | string): string[] {
 
 function normalizeComponent(record: ComponentRecord): ComponentRecord {
   const legacy = record as ComponentRecord & { targetVersion?: string; versionHistory?: Array<{ version?: string }> };
+  const { groupName: rawGroupName, ...recordWithoutGroup } = record;
   const currentVersion = record.currentVersion?.trim() || legacy.targetVersion?.trim() || "1.0";
   const adoption = record.adoption ?? { web: "Needs Jira ticket", ios: "Needs Jira ticket", android: "Needs Jira ticket" };
   const releaseHistory = record.releaseHistory ?? legacy.versionHistory?.map((version) => version.version ?? "").filter(Boolean) ?? [];
+  const groupName = isGroupableType(record.type) ? rawGroupName?.trim() : "";
   return {
-    ...record,
+    ...recordWithoutGroup,
+    ...(groupName ? { groupName } : {}),
     support: (record.support as string) === "None" ? "No" : (record.support ?? "Planned"),
     adoption,
     currentVersion,
@@ -147,6 +151,7 @@ export default function Home() {
   const [openColumnFilter, setOpenColumnFilter] = useState<OpenColumnFilter | null>(null);
   const [importNotice, setImportNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const importInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -224,6 +229,7 @@ export default function Home() {
     const term = query.trim().toLowerCase();
     return components.filter((component) => {
       const matchesQuery = !term || component.name.toLowerCase().includes(term) ||
+        component.groupName?.toLowerCase().includes(term) ||
         component.variants.some((variant) => variant.toLowerCase().includes(term)) ||
         dependencyText(component.composition).includes(term);
       return matchesQuery &&
@@ -238,6 +244,7 @@ export default function Home() {
     (platformFilters.ios === "All statuses" || component.adoption.ios === platformFilters.ios) &&
     (platformFilters.android === "All statuses" || component.adoption.android === platformFilters.android)
   ), [highLevelMatches, platformFilters]);
+  const tableRows = useMemo(() => buildComponentTableRows(filtered), [filtered]);
 
   const selectedComponent = components.find((component) => component.id === detailTrail.at(-1));
   const activeHighLevel = [typeFilter !== "All types", designFilter !== "All design statuses", supportFilter !== "All cross-platform statuses", Boolean(query)].filter(Boolean).length;
@@ -262,6 +269,15 @@ export default function Home() {
   function openDetails(id: string, reset = false) {
     if (!components.some((component) => component.id === id)) return;
     setDetailTrail((current) => reset ? [id] : [...current.filter((item) => item !== id), id]);
+  }
+
+  function toggleGroup(key: string) {
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   function columnFilterValue(key: ColumnFilterKey): string {
@@ -321,8 +337,12 @@ export default function Home() {
     const composition = reconcileDirectRelationships(editing.composition ?? [], composedIds, components);
     const previousComposedIds = (previous?.composition ?? []).map((node) => node.componentId).filter((id): id is string => Boolean(id));
     const relationshipsChanged = !sameIds(previousComposedIds, composedIds);
+    const editingWithoutGroup = { ...editing };
+    delete editingWithoutGroup.groupName;
+    const groupName = isGroupableType(editing.type) ? editing.groupName?.trim() : "";
     const updated: ComponentRecord = {
-      ...editing,
+      ...editingWithoutGroup,
+      ...(groupName ? { groupName } : {}),
       name: editing.name.trim(),
       currentVersion,
       releaseHistory,
@@ -598,17 +618,21 @@ export default function Home() {
                 {(["web", "ios", "android"] as Platform[]).map((platform) => <th key={platform}><ColumnFilterButton filterKey={platform} label={platformLabels[platform]} active={platformFilters[platform] !== "All statuses"} expanded={openColumnFilter?.key === platform} onClick={toggleColumnFilter} /></th>)}
               </tr></thead>
               <tbody>
-                {filtered.map((component) => (
-                  <tr key={component.id}>
-                    <td><button className="component-link" onClick={() => openDetails(component.id, true)}><strong>{component.name}</strong><small>Version {component.currentVersion}</small></button></td>
-                    <td><span className={`type-label type-${component.type.toLowerCase().replace(" ", "-")}`}>{typeLabel[component.type]}</span></td>
-                    <td><Status value={component.status} /></td>
-                    <td><Status value={component.support} /></td>
-                    <td><Status value={component.adoption.web} compact /></td>
-                    <td><Status value={component.adoption.ios} compact /></td>
-                    <td><Status value={component.adoption.android} compact /></td>
-                  </tr>
-                ))}
+                {tableRows.map((row) => row.kind === "component"
+                  ? <ComponentInventoryRow key={row.component.id} component={row.component} onSelect={openDetails} />
+                  : <Fragment key={row.key}>
+                    <tr className="component-group-row">
+                      <td><button className="component-group-toggle" aria-expanded={expandedGroups.has(row.key)} onClick={() => toggleGroup(row.key)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18L15 12L9 6" /></svg><span><strong>{row.name}</strong><small>{row.components.length} variant{row.components.length === 1 ? "" : "s"}</small></span></button></td>
+                      <td><span className={`type-label type-${row.type.toLowerCase()}`}>{typeLabel[row.type]}</span></td>
+                      <td><Status value={rollupStatus(row.components.map((component) => component.status))} /></td>
+                      <td><Status value={rollupStatus(row.components.map((component) => component.support))} /></td>
+                      <td><Status value={rollupStatus(row.components.map((component) => component.adoption.web))} compact /></td>
+                      <td><Status value={rollupStatus(row.components.map((component) => component.adoption.ios))} compact /></td>
+                      <td><Status value={rollupStatus(row.components.map((component) => component.adoption.android))} compact /></td>
+                    </tr>
+                    {expandedGroups.has(row.key) && row.components.map((component) => <ComponentInventoryRow key={component.id} component={component} onSelect={openDetails} grouped />)}
+                  </Fragment>
+                )}
               </tbody>
             </table>
             {!filtered.length && (components.length === 0
@@ -713,6 +737,22 @@ function ColumnFilterButton({ filterKey, label, active, expanded, onClick }: {
   </button>;
 }
 
+function ComponentInventoryRow({ component, onSelect, grouped = false }: {
+  component: ComponentRecord;
+  onSelect: (id: string, reset?: boolean) => void;
+  grouped?: boolean;
+}) {
+  return <tr className={grouped ? "component-variant-row" : undefined}>
+    <td><button className="component-link" onClick={() => onSelect(component.id, true)}><strong>{component.name}</strong><small>Version {component.currentVersion}</small></button></td>
+    <td><span className={`type-label type-${component.type.toLowerCase().replace(" ", "-")}`}>{typeLabel[component.type]}</span></td>
+    <td><Status value={component.status} /></td>
+    <td><Status value={component.support} /></td>
+    <td><Status value={component.adoption.web} compact /></td>
+    <td><Status value={component.adoption.ios} compact /></td>
+    <td><Status value={component.adoption.android} compact /></td>
+  </tr>;
+}
+
 function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClose, onSelect, onEdit, canEdit }: {
   component: ComponentRecord;
   components: ComponentRecord[];
@@ -761,6 +801,7 @@ function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClos
       </section>
 
       <section className="detail-section detail-meta">
+        {component.groupName && <div><span>Parent group</span><p>{component.groupName}</p></div>}
         <div><span>Variants</span><p>{component.variants.join(" · ") || "None"}</p></div>
         <div><span>Figma page</span><p>{component.source?.page ?? "Not linked"}</p></div>
         <div><span>Updated</span><p>{component.updated}</p></div>
@@ -807,6 +848,7 @@ function Editor({ component, components, onChange, onCancel, onSave, onDelete, c
   canDelete: boolean;
 }) {
   const candidates = components.filter((candidate) => candidate.id !== component.id);
+  const groupNames = [...new Set(components.filter((candidate) => candidate.type === component.type && candidate.groupName?.trim()).map((candidate) => candidate.groupName!.trim()))].sort((left, right) => left.localeCompare(right));
   const [composedIds, setComposedIds] = useState(() => (component.composition ?? []).map((node) => node.componentId).filter((id): id is string => Boolean(id)));
   const [usedInIds, setUsedInIds] = useState(() => components.filter((candidate) => walkIds(candidate.composition).includes(component.id)).map((candidate) => candidate.id));
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -822,8 +864,9 @@ function Editor({ component, components, onChange, onCancel, onSave, onDelete, c
       <form onSubmit={(event) => onSave(event, composedIds, usedInIds)}>
         <div className="form-grid">
           <label className="wide">Name<input required autoFocus value={component.name} onChange={(event) => onChange({ ...component, name: event.target.value })} /></label>
-          <label>Type<select value={component.type} onChange={(event) => onChange({ ...component, type: event.target.value as ComponentType })}>{componentTypes.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
+          <label>Type<select value={component.type} onChange={(event) => { const type = event.target.value as ComponentType; const next = { ...component, type }; if (!isGroupableType(type)) delete next.groupName; onChange(next); }}>{componentTypes.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
           <label>Design status<select value={component.status} onChange={(event) => onChange({ ...component, status: event.target.value as ComponentStatus })}>{designStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
+          {isGroupableType(component.type) && <label className="wide">Parent group <small>Optional · manually groups related variants in the table</small><input list="component-group-names" value={component.groupName ?? ""} onChange={(event) => onChange({ ...component, groupName: event.target.value })} placeholder="e.g. Carousel List B" /><datalist id="component-group-names">{groupNames.map((name) => <option key={name} value={name} />)}</datalist></label>}
           <label className="wide">Cross Platform<select value={component.support} onChange={(event) => onChange({ ...component, support: event.target.value as SupportStatus })}>{supportStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
           <h3 className="form-section-title">Release</h3>
           <label className="wide">Current version<input required pattern="[0-9]+\.[0-9]+(\.[0-9]+)?" title="Use a semantic version such as 1.0, 1.1, or 2.0" value={component.currentVersion} onChange={(event) => onChange({ ...component, currentVersion: event.target.value })} /></label>

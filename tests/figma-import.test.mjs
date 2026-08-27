@@ -64,6 +64,7 @@ test("repeat imports preserve manually managed workflow fields", () => {
     releaseHistory: ["1.1", "1.0"],
     links: { jira: ["https://jira.example/MAPLE-1"] },
     notes: "Editor-authored note",
+    groupName: "Top stories group",
   };
   const result = mergeImportedComponents([existingModule], imported.filter((record) => record.type === "Module"));
 
@@ -75,6 +76,7 @@ test("repeat imports preserve manually managed workflow fields", () => {
   assert.deepEqual(result.components[0].releaseHistory, ["1.1", "1.0"]);
   assert.deepEqual(result.components[0].links.jira, ["https://jira.example/MAPLE-1"]);
   assert.equal(result.components[0].notes, "Editor-authored note");
+  assert.equal(result.components[0].groupName, "Top stories group");
   assert.match(result.components[0].links.figma, /figma-file-key/);
 });
 
