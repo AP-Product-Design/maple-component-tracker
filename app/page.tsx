@@ -21,17 +21,31 @@ import { buildComponentTableRows, isGroupableType, rollupStatus } from "./compon
 const componentTypes: Array<ComponentType | "All types"> = [
   "All types", "Base", "Slot", "Module", "Page structure",
 ];
+const componentTypeFilterLabels: Record<(typeof componentTypes)[number], string> = {
+  "All types": "All types",
+  Base: "Base components",
+  Slot: "Slot components",
+  Module: "Modules",
+  "Page structure": "Page templates",
+};
 const designStatuses: Array<ComponentStatus | "All design statuses"> = [
   "All design statuses", "Proposed", "In design", "Ready", "Deprecated",
 ];
-const supportStatuses: Array<SupportStatus | "All cross-platform statuses"> = [
-  "All cross-platform statuses", "Full", "Partial", "No", "Planned",
+const availabilityFilters: Array<SupportStatus | "All availability"> = [
+  "All availability", "Full", "Partial", "No",
 ];
+const supportStatuses: SupportStatus[] = ["Full", "Partial", "No"];
+const availabilityLabels: Record<SupportStatus, string> = {
+  Full: "Cross platform",
+  Partial: "Partial",
+  No: "Single platform",
+};
 const adoptionStatuses: Array<AdoptionStatus | "All statuses"> = [
   "All statuses", "Needs Jira ticket", "Backlog", "In dev", "In review", "Released", "Blocked", "Not supported",
 ];
-const platformLabels: Record<Platform, string> = { web: "Web", ios: "iOS", android: "Android" };
-type ColumnFilterKey = "type" | "design" | "support" | Platform;
+const platforms: Platform[] = ["storybook", "web", "ios", "android"];
+const platformLabels: Record<Platform, string> = { storybook: "Storybook", web: "Web", ios: "iOS", android: "Android" };
+type ColumnFilterKey = "design" | Platform;
 type OpenColumnFilter = { key: ColumnFilterKey; top: number; left: number };
 type PendingImport = {
   fileName: string;
@@ -44,6 +58,12 @@ type PendingImport = {
 const typeLabel: Record<ComponentType, string> = {
   Base: "Base", Slot: "Slot", Module: "Module", "Page structure": "Page structure",
 };
+const componentTypeMetaLabel: Record<ComponentType, string> = {
+  Base: "Base component",
+  Slot: "Slot component",
+  Module: "Module",
+  "Page structure": "Page template",
+};
 
 const emptyComponent = (): ComponentRecord => ({
   id: crypto.randomUUID(),
@@ -51,8 +71,8 @@ const emptyComponent = (): ComponentRecord => ({
   type: "Base",
   variants: [],
   status: "Proposed",
-  support: "Planned",
-  adoption: { web: "Needs Jira ticket", ios: "Needs Jira ticket", android: "Needs Jira ticket" },
+  support: "Partial",
+  adoption: { storybook: "Needs Jira ticket", web: "Needs Jira ticket", ios: "Needs Jira ticket", android: "Needs Jira ticket" },
   currentVersion: "1.0",
   releaseHistory: [],
   composedOf: [],
@@ -66,8 +86,12 @@ function statusClass(value: string) {
   return value.toLowerCase().replaceAll(" ", "-");
 }
 
-function Status({ value, compact = false }: { value: string; compact?: boolean }) {
-  return <span className={`status ${statusClass(value)} ${compact ? "compact" : ""}`}>{value}</span>;
+function Status({ value, label, compact = false }: { value: string; label?: string; compact?: boolean }) {
+  return <span className={`status ${statusClass(value)} ${compact ? "compact" : ""}`}>{label ?? value}</span>;
+}
+
+function availabilityLabel(value: string) {
+  return availabilityLabels[value as SupportStatus] ?? value;
 }
 
 function walkIds(nodes: CompositionNode[] = []): string[] {
@@ -87,13 +111,18 @@ function normalizeComponent(record: ComponentRecord): ComponentRecord {
   const legacy = record as ComponentRecord & { targetVersion?: string; versionHistory?: Array<{ version?: string }> };
   const { groupName: rawGroupName, ...recordWithoutGroup } = record;
   const currentVersion = record.currentVersion?.trim() || legacy.targetVersion?.trim() || "1.0";
-  const adoption = record.adoption ?? { web: "Needs Jira ticket", ios: "Needs Jira ticket", android: "Needs Jira ticket" };
+  const adoption = {
+    storybook: record.adoption?.storybook ?? "Needs Jira ticket",
+    web: record.adoption?.web ?? "Needs Jira ticket",
+    ios: record.adoption?.ios ?? "Needs Jira ticket",
+    android: record.adoption?.android ?? "Needs Jira ticket",
+  };
   const releaseHistory = record.releaseHistory ?? legacy.versionHistory?.map((version) => version.version ?? "").filter(Boolean) ?? [];
   const groupName = isGroupableType(record.type) ? rawGroupName?.trim() : "";
   return {
     ...recordWithoutGroup,
     ...(groupName ? { groupName } : {}),
-    support: (record.support as string) === "None" ? "No" : (record.support ?? "Planned"),
+    support: (record.support as string) === "None" ? "No" : (record.support as string) === "Planned" ? "Partial" : (record.support ?? "Partial"),
     adoption,
     currentVersion,
     releaseHistory: [...new Set(releaseHistory.filter((version) => version !== currentVersion))],
@@ -142,9 +171,9 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<(typeof componentTypes)[number]>("All types");
   const [designFilter, setDesignFilter] = useState<(typeof designStatuses)[number]>("All design statuses");
-  const [supportFilter, setSupportFilter] = useState<(typeof supportStatuses)[number]>("All cross-platform statuses");
+  const [supportFilter, setSupportFilter] = useState<(typeof availabilityFilters)[number]>("All availability");
   const [platformFilters, setPlatformFilters] = useState<Record<Platform, (typeof adoptionStatuses)[number]>>({
-    web: "All statuses", ios: "All statuses", android: "All statuses",
+    storybook: "All statuses", web: "All statuses", ios: "All statuses", android: "All statuses",
   });
   const [detailTrail, setDetailTrail] = useState<string[]>([]);
   const [editing, setEditing] = useState<ComponentRecord | null>(null);
@@ -235,26 +264,24 @@ export default function Home() {
       return matchesQuery &&
         (typeFilter === "All types" || component.type === typeFilter) &&
         (designFilter === "All design statuses" || component.status === designFilter) &&
-        (supportFilter === "All cross-platform statuses" || component.support === supportFilter);
+        (supportFilter === "All availability" || component.support === supportFilter);
     });
   }, [components, query, typeFilter, designFilter, supportFilter]);
 
-  const filtered = useMemo(() => highLevelMatches.filter((component) =>
-    (platformFilters.web === "All statuses" || component.adoption.web === platformFilters.web) &&
-    (platformFilters.ios === "All statuses" || component.adoption.ios === platformFilters.ios) &&
-    (platformFilters.android === "All statuses" || component.adoption.android === platformFilters.android)
-  ), [highLevelMatches, platformFilters]);
+  const filtered = useMemo(() => highLevelMatches.filter((component) => platforms.every((platform) =>
+    platformFilters[platform] === "All statuses" || component.adoption[platform] === platformFilters[platform]
+  )), [highLevelMatches, platformFilters]);
   const tableRows = useMemo(() => buildComponentTableRows(filtered), [filtered]);
 
   const selectedComponent = components.find((component) => component.id === detailTrail.at(-1));
-  const activeHighLevel = [typeFilter !== "All types", designFilter !== "All design statuses", supportFilter !== "All cross-platform statuses", Boolean(query)].filter(Boolean).length;
+  const activeHighLevel = [typeFilter !== "All types", designFilter !== "All design statuses", supportFilter !== "All availability", Boolean(query)].filter(Boolean).length;
   const activePlatform = Object.values(platformFilters).filter((value) => value !== "All statuses").length;
   const activeFacetCount = activeHighLevel + activePlatform - (query ? 1 : 0);
   const activeFacets = [
-    typeFilter !== "All types" ? `Type: ${typeFilter}` : "",
+    typeFilter !== "All types" ? `Type: ${componentTypeFilterLabels[typeFilter]}` : "",
     designFilter !== "All design statuses" ? `Design: ${designFilter}` : "",
-    supportFilter !== "All cross-platform statuses" ? `Cross Platform: ${supportFilter}` : "",
-    ...(["web", "ios", "android"] as Platform[]).map((platform) => platformFilters[platform] !== "All statuses" ? `${platformLabels[platform]}: ${platformFilters[platform]}` : ""),
+    supportFilter !== "All availability" ? `Availability: ${availabilityLabel(supportFilter)}` : "",
+    ...platforms.map((platform) => platformFilters[platform] !== "All statuses" ? `${platformLabels[platform]}: ${platformFilters[platform]}` : ""),
   ].filter(Boolean);
   const needsPlanning = components.filter((component) => Object.values(component.adoption).includes("Needs Jira ticket")).length;
   const inDelivery = components.filter((component) => Object.values(component.adoption).some((value) => value === "In dev" || value === "In review")).length;
@@ -281,30 +308,22 @@ export default function Home() {
   }
 
   function columnFilterValue(key: ColumnFilterKey): string {
-    if (key === "type") return typeFilter;
     if (key === "design") return designFilter;
-    if (key === "support") return supportFilter;
     return platformFilters[key];
   }
 
   function columnFilterOptions(key: ColumnFilterKey): readonly string[] {
-    if (key === "type") return componentTypes;
     if (key === "design") return designStatuses;
-    if (key === "support") return supportStatuses;
     return adoptionStatuses;
   }
 
   function columnFilterLabel(key: ColumnFilterKey): string {
-    if (key === "type") return "Type";
     if (key === "design") return "Design";
-    if (key === "support") return "Cross Platform";
     return platformLabels[key];
   }
 
   function updateColumnFilter(key: ColumnFilterKey, value: string) {
-    if (key === "type") setTypeFilter(value as (typeof componentTypes)[number]);
-    else if (key === "design") setDesignFilter(value as (typeof designStatuses)[number]);
-    else if (key === "support") setSupportFilter(value as (typeof supportStatuses)[number]);
+    if (key === "design") setDesignFilter(value as (typeof designStatuses)[number]);
     else setPlatformFilters((current) => ({ ...current, [key]: value as (typeof adoptionStatuses)[number] }));
     setOpenColumnFilter(null);
   }
@@ -515,8 +534,8 @@ export default function Home() {
     setQuery("");
     setTypeFilter("All types");
     setDesignFilter("All design statuses");
-    setSupportFilter("All cross-platform statuses");
-    setPlatformFilters({ web: "All statuses", ios: "All statuses", android: "All statuses" });
+    setSupportFilter("All availability");
+    setPlatformFilters({ storybook: "All statuses", web: "All statuses", ios: "All statuses", android: "All statuses" });
   }
 
   if (!authReady) return <AccessScreen title="Connecting to Maple" message="Checking your AP account…" />;
@@ -575,8 +594,8 @@ export default function Home() {
               <p>Modules are contextual UI presentations that organize base components and slot components into a meaningful section, collection, or editorial arrangement. Modules may expose slots through which approved components are supplied.</p>
             </article>
             <article>
-              <h2>Page structure</h2>
-              <p>Page structures are top-level templates that arrange modules and page-level regions into a complete experience. A page structure defines the page&apos;s composition rules without overriding the internals of its modules or components.</p>
+              <h2>Page template</h2>
+              <p>Page templates are top-level templates that arrange modules and page-level regions into a complete experience. A page template defines the page&apos;s composition rules without overriding the internals of its modules or components.</p>
             </article>
           </div>
         </details>
@@ -592,13 +611,17 @@ export default function Home() {
               <span>Search</span>
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Component or dependency" />
             </label>
+            <div className="table-toolbar-filters">
+              <Filter compact label="Type" value={typeFilter} options={componentTypes} optionLabels={componentTypeFilterLabels} onChange={(value) => setTypeFilter(value as typeof typeFilter)} />
+              <Filter compact label="Availability" value={supportFilter} options={availabilityFilters} optionLabels={availabilityLabels} onChange={(value) => setSupportFilter(value as typeof supportFilter)} />
+            </div>
             <details className="mobile-filter-panel">
               <summary>Filters{activeFacetCount ? ` (${activeFacetCount})` : ""}</summary>
               <div className="mobile-filter-grid">
-                <Filter label="Type" value={typeFilter} options={componentTypes} onChange={(value) => setTypeFilter(value as typeof typeFilter)} />
+                <Filter label="Type" value={typeFilter} options={componentTypes} optionLabels={componentTypeFilterLabels} onChange={(value) => setTypeFilter(value as typeof typeFilter)} />
                 <Filter label="Design status" value={designFilter} options={designStatuses} onChange={(value) => setDesignFilter(value as typeof designFilter)} />
-                <Filter label="Cross Platform" value={supportFilter} options={supportStatuses} onChange={(value) => setSupportFilter(value as typeof supportFilter)} />
-                {(["web", "ios", "android"] as Platform[]).map((platform) => <Filter key={platform} label={platformLabels[platform]} value={platformFilters[platform]} options={adoptionStatuses} onChange={(value) => setPlatformFilters((current) => ({ ...current, [platform]: value as (typeof adoptionStatuses)[number] }))} />)}
+                <Filter label="Availability" value={supportFilter} options={availabilityFilters} optionLabels={availabilityLabels} onChange={(value) => setSupportFilter(value as typeof supportFilter)} />
+                {platforms.map((platform) => <Filter key={platform} label={platformLabels[platform]} value={platformFilters[platform]} options={adoptionStatuses} onChange={(value) => setPlatformFilters((current) => ({ ...current, [platform]: value as (typeof adoptionStatuses)[number] }))} />)}
               </div>
             </details>
           </div>
@@ -612,20 +635,17 @@ export default function Home() {
             <table>
               <thead><tr>
                 <th>Component</th>
-                <th><ColumnFilterButton filterKey="type" label="Type" active={typeFilter !== "All types"} expanded={openColumnFilter?.key === "type"} onClick={toggleColumnFilter} /></th>
                 <th><ColumnFilterButton filterKey="design" label="Design" active={designFilter !== "All design statuses"} expanded={openColumnFilter?.key === "design"} onClick={toggleColumnFilter} /></th>
-                <th><ColumnFilterButton filterKey="support" label="Cross Platform" active={supportFilter !== "All cross-platform statuses"} expanded={openColumnFilter?.key === "support"} onClick={toggleColumnFilter} /></th>
-                {(["web", "ios", "android"] as Platform[]).map((platform) => <th key={platform}><ColumnFilterButton filterKey={platform} label={platformLabels[platform]} active={platformFilters[platform] !== "All statuses"} expanded={openColumnFilter?.key === platform} onClick={toggleColumnFilter} /></th>)}
+                {platforms.map((platform) => <th key={platform}><ColumnFilterButton filterKey={platform} label={platformLabels[platform]} active={platformFilters[platform] !== "All statuses"} expanded={openColumnFilter?.key === platform} onClick={toggleColumnFilter} /></th>)}
               </tr></thead>
               <tbody>
                 {tableRows.map((row) => row.kind === "component"
                   ? <ComponentInventoryRow key={row.component.id} component={row.component} onSelect={openDetails} />
                   : <Fragment key={row.key}>
                     <tr className="component-group-row">
-                      <td><button className="component-group-toggle" aria-expanded={expandedGroups.has(row.key)} onClick={() => toggleGroup(row.key)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18L15 12L9 6" /></svg><span><strong>{row.name}</strong><small>{row.components.length} variant{row.components.length === 1 ? "" : "s"}</small></span></button></td>
-                      <td><span className={`type-label type-${row.type.toLowerCase()}`}>{typeLabel[row.type]}</span></td>
+                      <td><button className="component-group-toggle" aria-expanded={expandedGroups.has(row.key)} onClick={() => toggleGroup(row.key)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18L15 12L9 6" /></svg><span><strong>{row.name}</strong><small>{row.components.length} variant{row.components.length === 1 ? "" : "s"} | {componentTypeMetaLabel[row.type]}</small></span></button></td>
                       <td><Status value={rollupStatus(row.components.map((component) => component.status))} /></td>
-                      <td><Status value={rollupStatus(row.components.map((component) => component.support))} /></td>
+                      <td><Status value={rollupStatus(row.components.map((component) => component.adoption.storybook))} compact /></td>
                       <td><Status value={rollupStatus(row.components.map((component) => component.adoption.web))} compact /></td>
                       <td><Status value={rollupStatus(row.components.map((component) => component.adoption.ios))} compact /></td>
                       <td><Status value={rollupStatus(row.components.map((component) => component.adoption.android))} compact /></td>
@@ -714,14 +734,15 @@ function AccessScreen({ title, message, actionLabel, onAction, error = false }: 
   </main>;
 }
 
-function Filter({ label, value, options, onChange, compact = false }: {
+function Filter({ label, value, options, optionLabels, onChange, compact = false }: {
   label: string;
   value: string;
   options: readonly string[];
+  optionLabels?: Record<string, string>;
   onChange: (value: string) => void;
   compact?: boolean;
 }) {
-  return <label className={`filter ${compact ? "compact-filter" : ""}`}><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select></label>;
+  return <label className={`filter ${compact ? "compact-filter" : ""}`}><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option} value={option}>{optionLabels?.[option] ?? option}</option>)}</select></label>;
 }
 
 function ColumnFilterButton({ filterKey, label, active, expanded, onClick }: {
@@ -743,10 +764,9 @@ function ComponentInventoryRow({ component, onSelect, grouped = false }: {
   grouped?: boolean;
 }) {
   return <tr className={grouped ? "component-variant-row" : undefined}>
-    <td><button className="component-link" onClick={() => onSelect(component.id, true)}><strong>{component.name}</strong><small>Version {component.currentVersion}</small></button></td>
-    <td><span className={`type-label type-${component.type.toLowerCase().replace(" ", "-")}`}>{typeLabel[component.type]}</span></td>
+    <td><button className="component-link" onClick={() => onSelect(component.id, true)}><strong>{component.name}</strong><small>Ver {component.currentVersion} | {componentTypeMetaLabel[component.type]}</small></button></td>
     <td><Status value={component.status} /></td>
-    <td><Status value={component.support} /></td>
+    <td><Status value={component.adoption.storybook} compact /></td>
     <td><Status value={component.adoption.web} compact /></td>
     <td><Status value={component.adoption.ios} compact /></td>
     <td><Status value={component.adoption.android} compact /></td>
@@ -783,7 +803,8 @@ function DetailDrawer({ component, components, usedBy, canGoBack, onBack, onClos
         <h3>Current status</h3>
         <div className="status-grid">
           <div><span>Design</span><Status value={component.status} /></div>
-          <div><span>Cross Platform</span><Status value={component.support} /></div>
+          <div><span>Availability</span><Status value={component.support} label={availabilityLabel(component.support)} /></div>
+          <div><span>Storybook</span><Status value={component.adoption.storybook} /></div>
           <div><span>Web</span><Status value={component.adoption.web} /></div>
           <div><span>iOS</span><Status value={component.adoption.ios} /></div>
           <div><span>Android</span><Status value={component.adoption.android} /></div>
@@ -867,11 +888,11 @@ function Editor({ component, components, onChange, onCancel, onSave, onDelete, c
           <label>Type<select value={component.type} onChange={(event) => { const type = event.target.value as ComponentType; const next = { ...component, type }; if (!isGroupableType(type)) delete next.groupName; onChange(next); }}>{componentTypes.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
           <label>Design status<select value={component.status} onChange={(event) => onChange({ ...component, status: event.target.value as ComponentStatus })}>{designStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
           {isGroupableType(component.type) && <label className="wide">Parent group <small>Optional · manually groups related variants in the table</small><input list="component-group-names" value={component.groupName ?? ""} onChange={(event) => onChange({ ...component, groupName: event.target.value })} placeholder="e.g. Carousel List B" /><datalist id="component-group-names">{groupNames.map((name) => <option key={name} value={name} />)}</datalist></label>}
-          <label className="wide">Cross Platform<select value={component.support} onChange={(event) => onChange({ ...component, support: event.target.value as SupportStatus })}>{supportStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>
+          <label className="wide">Availability<select value={component.support} onChange={(event) => onChange({ ...component, support: event.target.value as SupportStatus })}>{supportStatuses.map((value) => <option key={value} value={value}>{availabilityLabel(value)}</option>)}</select></label>
           <h3 className="form-section-title">Release</h3>
           <label className="wide">Current version<input required pattern="[0-9]+\.[0-9]+(\.[0-9]+)?" title="Use a semantic version such as 1.0, 1.1, or 2.0" value={component.currentVersion} onChange={(event) => onChange({ ...component, currentVersion: event.target.value })} /></label>
           <h3 className="form-section-title">Platform rollout</h3>
-          {(["web", "ios", "android"] as Platform[]).map((platform) => <label key={platform}>{platformLabels[platform]} status<select value={component.adoption[platform]} onChange={(event) => onChange({ ...component, adoption: { ...component.adoption, [platform]: event.target.value as AdoptionStatus } })}>{adoptionStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>)}
+          {platforms.map((platform) => <label key={platform}>{platformLabels[platform]} status<select value={component.adoption[platform]} onChange={(event) => onChange({ ...component, adoption: { ...component.adoption, [platform]: event.target.value as AdoptionStatus } })}>{adoptionStatuses.slice(1).map((value) => <option key={value}>{value}</option>)}</select></label>)}
           <label className="wide">Variants <small>Comma separated</small><input value={component.variants.join(", ")} onChange={(event) => onChange({ ...component, variants: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
           <h3 className="form-section-title">System relationships</h3>
           <RelationshipPicker label="Composed of" help="Direct components used to build this component" candidates={candidates} selectedIds={composedIds} onChange={setComposedIds} />

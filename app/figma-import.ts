@@ -3,6 +3,7 @@ import type { ComponentRecord, ComponentType, CompositionNode, Platform } from "
 type JsonObject = Record<string, unknown>;
 
 const defaultAdoption: ComponentRecord["adoption"] = {
+  storybook: "Needs Jira ticket",
   web: "Needs Jira ticket",
   ios: "Needs Jira ticket",
   android: "Needs Jira ticket",
@@ -133,7 +134,7 @@ function makeRecord({ id, name, type, variants, page, nodeId, notes, composition
     type,
     variants,
     status: "In design",
-    support: "Planned",
+    support: "Partial",
     adoption: { ...defaultAdoption } as Record<Platform, ComponentRecord["adoption"][Platform]>,
     currentVersion: "1.0",
     releaseHistory: [],

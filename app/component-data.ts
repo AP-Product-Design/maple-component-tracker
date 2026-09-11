@@ -1,6 +1,6 @@
 export type ComponentType = "Base" | "Slot" | "Module" | "Page structure";
 export type ComponentStatus = "Proposed" | "In design" | "Ready" | "Deprecated";
-export type SupportStatus = "Full" | "Partial" | "No" | "Planned";
+export type SupportStatus = "Full" | "Partial" | "No";
 export type AdoptionStatus =
   | "Needs Jira ticket"
   | "Backlog"
@@ -9,7 +9,7 @@ export type AdoptionStatus =
   | "Released"
   | "Blocked"
   | "Not supported";
-export type Platform = "web" | "ios" | "android";
+export type Platform = "storybook" | "web" | "ios" | "android";
 
 export type CompositionNode = {
   name: string;
@@ -57,6 +57,7 @@ const figmaUrl = (nodeId?: string) =>
     : `https://www.figma.com/design/${FIGMA_FILE}`;
 
 const plannedAdoption: Record<Platform, AdoptionStatus> = {
+  storybook: "Needs Jira ticket",
   web: "Needs Jira ticket",
   ios: "Needs Jira ticket",
   android: "Needs Jira ticket",
@@ -75,7 +76,7 @@ function figmaRecord(
     type: record.type,
     variants: record.variants,
     status: "In design",
-    support: "Planned",
+    support: "Partial",
     adoption: { ...plannedAdoption },
     currentVersion: "1.0",
     releaseHistory: [],
@@ -453,43 +454,43 @@ const figmaComponents: ComponentRecord[] = [
 const existingComponents: ComponentRecord[] = [
   {
     id: "button", name: "Button", type: "Base", variants: ["Primary", "Secondary", "Tertiary", "Icon"], status: "Ready", support: "Full",
-    adoption: { web: "Released", ios: "Released", android: "Released" }, composedOf: [], links: {},
+    adoption: { storybook: "Released", web: "Released", ios: "Released", android: "Released" }, composedOf: [], links: {},
     currentVersion: "1.0", releaseHistory: [],
     notes: "Core action primitive. Use one primary action per surface.", updated: "Jul 28",
   },
   {
     id: "headline", name: "Headline", type: "Base", variants: ["Display", "Page", "Section", "Card"], status: "Ready", support: "Full",
-    adoption: { web: "Released", ios: "Released", android: "Released" }, composedOf: [], links: {},
+    adoption: { storybook: "Released", web: "Released", ios: "Released", android: "Released" }, composedOf: [], links: {},
     currentVersion: "1.0", releaseHistory: [],
     notes: "Editorial type styles align to Maple’s shared type scale.", updated: "Jul 24",
   },
   {
     id: "media", name: "Media", type: "Base", variants: ["Image", "Video", "Gallery"], status: "In design", support: "Partial",
-    adoption: { web: "In review", ios: "In dev", android: "Backlog" }, composedOf: [], links: {},
+    adoption: { storybook: "In review", web: "In review", ios: "In dev", android: "Backlog" }, composedOf: [], links: {},
     currentVersion: "1.0", releaseHistory: [],
     notes: "Android gallery behavior is awaiting interaction guidance.", updated: "Jul 22",
   },
   {
-    id: "live-update", name: "Live update", type: "Slot", variants: ["Default", "Key event"], status: "Proposed", support: "Planned",
+    id: "live-update", name: "Live update", type: "Slot", variants: ["Default", "Key event"], status: "Proposed", support: "Partial",
     adoption: { ...plannedAdoption }, composedOf: ["Timestamp", "Headline", "Body", "Share action"], links: {},
     currentVersion: "1.0", releaseHistory: [],
     notes: "Proposed pattern for live coverage timelines.", updated: "Jul 16",
   },
   {
     id: "top-stories", name: "Top stories", type: "Module", variants: ["Lead", "River"], status: "In design", support: "Partial",
-    adoption: { web: "In dev", ios: "Backlog", android: "Blocked" }, composedOf: ["Story card", "Headline", "Divider", "Button"], links: {},
+    adoption: { storybook: "In dev", web: "In dev", ios: "Backlog", android: "Blocked" }, composedOf: ["Story card", "Headline", "Divider", "Button"], links: {},
     currentVersion: "1.0", releaseHistory: [],
     notes: "Android is blocked on the new responsive image API.", updated: "Jul 14",
   },
   {
     id: "related-content", name: "Related content", type: "Module", variants: ["Inline", "End of story"], status: "Ready", support: "Partial",
-    adoption: { web: "Released", ios: "In review", android: "In dev" }, composedOf: ["Story card", "Headline", "Divider"], links: {},
+    adoption: { storybook: "Released", web: "Released", ios: "In review", android: "In dev" }, composedOf: ["Story card", "Headline", "Divider"], links: {},
     currentVersion: "1.0", releaseHistory: [],
     notes: "Inline placement is currently web-only.", updated: "Jul 11",
   },
   {
     id: "article-page", name: "Article page", type: "Page structure", variants: ["Standard", "Live", "Visual"], status: "In design", support: "Partial",
-    adoption: { web: "In review", ios: "In dev", android: "In dev" }, composedOf: ["Story header", "Article body", "Related content", "Ad slot"], links: {},
+    adoption: { storybook: "In review", web: "In review", ios: "In dev", android: "In dev" }, composedOf: ["Story header", "Article body", "Related content", "Ad slot"], links: {},
     currentVersion: "1.0", releaseHistory: [],
     notes: "Live template composition is still being validated.", updated: "Jul 08",
   },

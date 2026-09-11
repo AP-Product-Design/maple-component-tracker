@@ -51,6 +51,8 @@ test("imports top-level and nested Figma components while ignoring building bloc
   assert.equal(module.composition[0].componentId, "figma-slot-story-card");
   assert.equal(module.currentVersion, "1.0");
   assert.deepEqual(module.releaseHistory, []);
+  assert.equal(module.support, "Partial");
+  assert.equal(module.adoption.storybook, "Needs Jira ticket");
   assert.match(module.links.figma, /figma-file-key.*node-id=1-1/);
 });
 
