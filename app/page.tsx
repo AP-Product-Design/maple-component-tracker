@@ -563,7 +563,7 @@ export default function Home() {
         <section className="page-intro">
           <div>
             <h1>Component tracker</h1>
-            <p>Review design readiness and platform delivery gaps across the Maple system.</p>
+            <p>Review design readiness and platform delivery gaps across the Maple design system.</p>
           </div>
           <span className="last-updated">Data updated Jul 31</span>
         </section>
